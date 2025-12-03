@@ -1,6 +1,7 @@
 import rough from "roughjs";
 import { Element, AppState } from "./types";
 import { getStroke } from "perfect-freehand";
+import { drawArrowhead, renderDiamond } from "./renderHelpers";
 
 export const renderScene = (
     canvas: HTMLCanvasElement,
@@ -52,11 +53,21 @@ export const renderScene = (
                 // roughjs ellipse takes center x, y, width, height
                 rc.ellipse(x + width / 2, y + height / 2, width, height, options);
                 break;
+            case "diamond":
+                // Use custom diamond renderer
+                renderDiamond(ctx, x, y, width, height, strokeColor, backgroundColor, strokeWidth);
+                break;
             case "line":
+                if (points && points.length > 0) {
+                    rc.line(points[0].x, points[0].y, points[points.length - 1].x, points[points.length - 1].y, options);
+                }
+                break;
             case "arrow":
                 if (points && points.length > 0) {
-                    // Simple line for now
+                    // Draw line
                     rc.line(points[0].x, points[0].y, points[points.length - 1].x, points[points.length - 1].y, options);
+                    // Draw arrowhead
+                    drawArrowhead(ctx, points[0].x, points[0].y, points[points.length - 1].x, points[points.length - 1].y, strokeWidth, strokeColor);
                 }
                 break;
             case "pencil":
@@ -76,9 +87,51 @@ export const renderScene = (
                 break;
             case "text":
                 if (element.text) {
-                    ctx.font = `${strokeWidth * 10}px "Architects Daughter", sans-serif`;
+                    ctx.save();
+
+                    // Set font
+                    const fontSize = 20; // Fixed size for now
+                    ctx.font = `${fontSize}px "Architects Daughter", cursive`;
                     ctx.fillStyle = strokeColor;
-                    ctx.fillText(element.text, x, y + height); // approximate baseline
+                    ctx.textAlign = element.textAlign || "left";
+                    ctx.textBaseline = element.textBaseline || "top";
+
+                    // If text is attached to a container, clear background behind text
+                    if (element.containerElementId) {
+                        const containerElement = elements.find(el => el.id === element.containerElementId);
+                        if (containerElement && containerElement.backgroundColor !== "transparent") {
+                            // Measure text
+                            const metrics = ctx.measureText(element.text);
+                            const textWidth = metrics.width;
+                            const textHeight = fontSize * 1.2; // Approximate height
+
+                            // Calculate text position based on alignment
+                            let textX = x;
+                            if (element.textAlign === "center") {
+                                textX = x - textWidth / 2;
+                            } else if (element.textAlign === "right") {
+                                textX = x - textWidth;
+                            }
+
+                            let textY = y;
+                            if (element.textBaseline === "middle") {
+                                textY = y - textHeight / 2;
+                            } else if (element.textBaseline === "bottom") {
+                                textY = y - textHeight;
+                            }
+
+                            // Clear background with white rectangle
+                            ctx.fillStyle = "#ffffff";
+                            ctx.fillRect(textX - 4, textY - 2, textWidth + 8, textHeight + 4);
+
+                            // Reset fill style for text
+                            ctx.fillStyle = strokeColor;
+                        }
+                    }
+
+                    // Draw text
+                    ctx.fillText(element.text, x, y);
+                    ctx.restore();
                 }
                 break;
         }
@@ -88,68 +141,91 @@ export const renderScene = (
     if (selection.length > 0) {
         const selectedElements = elements.filter((el) => selection.includes(el.id));
         if (selectedElements.length > 0) {
-            // Calculate bounding box of all selected elements
-            let minX = Infinity;
-            let minY = Infinity;
-            let maxX = -Infinity;
-            let maxY = -Infinity;
+            // Check if all selected elements are lines/arrows
+            const allLinesOrArrows = selectedElements.every(el => el.type === "line" || el.type === "arrow");
 
-            selectedElements.forEach((el) => {
-                // For pencil/line/arrow, we should calculate based on points, 
-                // but for now using the bounding box (x, y, width, height) is a decent approximation 
-                // if we keep those updated correctly.
-                // However, for pencil, width/height might be 0 initially or not fully representative if not updated.
-                // Assuming x,y,width,height are kept up to date.
+            if (allLinesOrArrows && selectedElements.length === 1) {
+                // Draw control points for line/arrow
+                const element = selectedElements[0];
+                if (element.points && element.points.length >= 2) {
+                    const start = element.points[0];
+                    const end = element.points[element.points.length - 1];
+                    const middle = {
+                        x: (start.x + end.x) / 2,
+                        y: (start.y + end.y) / 2
+                    };
 
-                // Normalize for negative width/height
-                const ex = el.width < 0 ? el.x + el.width : el.x;
-                const ey = el.height < 0 ? el.y + el.height : el.y;
-                const ew = Math.abs(el.width);
-                const eh = Math.abs(el.height);
+                    ctx.save();
+                    ctx.fillStyle = "#ffffff";
+                    ctx.strokeStyle = "#3b82f6";
+                    ctx.lineWidth = 2 / zoom;
+                    const handleSize = 10 / zoom;
 
-                minX = Math.min(minX, ex);
-                minY = Math.min(minY, ey);
-                maxX = Math.max(maxX, ex + ew);
-                maxY = Math.max(maxY, ey + eh);
-            });
+                    // Draw control points
+                    [start, middle, end].forEach(point => {
+                        ctx.beginPath();
+                        ctx.arc(point.x, point.y, handleSize / 2, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.stroke();
+                    });
+                    ctx.restore();
+                }
+            } else {
+                // Draw bounding box for other elements or multi-selection
+                let minX = Infinity;
+                let minY = Infinity;
+                let maxX = -Infinity;
+                let maxY = -Infinity;
 
-            const margin = 8 / zoom;
-            const x = minX - margin;
-            const y = minY - margin;
-            const width = maxX - minX + margin * 2;
-            const height = maxY - minY + margin * 2;
+                selectedElements.forEach((el) => {
+                    const ex = el.width < 0 ? el.x + el.width : el.x;
+                    const ey = el.height < 0 ? el.y + el.height : el.y;
+                    const ew = Math.abs(el.width);
+                    const eh = Math.abs(el.height);
 
-            ctx.save();
-            ctx.strokeStyle = "#3b82f6"; // blue-500
-            ctx.lineWidth = 1 / zoom;
-            ctx.setLineDash([5 / zoom, 5 / zoom]);
-            ctx.strokeRect(x, y, width, height);
-            ctx.restore();
+                    minX = Math.min(minX, ex);
+                    minY = Math.min(minY, ey);
+                    maxX = Math.max(maxX, ex + ew);
+                    maxY = Math.max(maxY, ey + eh);
+                });
 
-            // Draw resize handles if only one element is selected (or maybe for group too later)
-            // For now, let's show handles for the bounding box of selection
-            ctx.save();
-            ctx.fillStyle = "#ffffff";
-            ctx.strokeStyle = "#3b82f6";
-            ctx.lineWidth = 1 / zoom;
-            const handleSize = 8 / zoom;
+                const margin = 8 / zoom;
+                const x = minX - margin;
+                const y = minY - margin;
+                const width = maxX - minX + margin * 2;
+                const height = maxY - minY + margin * 2;
 
-            const handles = [
-                { x: x, y: y }, // nw
-                { x: x + width / 2, y: y }, // n
-                { x: x + width, y: y }, // ne
-                { x: x + width, y: y + height / 2 }, // e
-                { x: x + width, y: y + height }, // se
-                { x: x + width / 2, y: y + height }, // s
-                { x: x, y: y + height }, // sw
-                { x: x, y: y + height / 2 }, // w
-            ];
+                ctx.save();
+                ctx.strokeStyle = "#3b82f6";
+                ctx.lineWidth = 1 / zoom;
+                ctx.setLineDash([5 / zoom, 5 / zoom]);
+                ctx.strokeRect(x, y, width, height);
+                ctx.restore();
 
-            handles.forEach(handle => {
-                ctx.fillRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
-                ctx.strokeRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
-            });
-            ctx.restore();
+                // Draw resize handles
+                ctx.save();
+                ctx.fillStyle = "#ffffff";
+                ctx.strokeStyle = "#3b82f6";
+                ctx.lineWidth = 1 / zoom;
+                const handleSize = 8 / zoom;
+
+                const handles = [
+                    { x: x, y: y },
+                    { x: x + width / 2, y: y },
+                    { x: x + width, y: y },
+                    { x: x + width, y: y + height / 2 },
+                    { x: x + width, y: y + height },
+                    { x: x + width / 2, y: y + height },
+                    { x: x, y: y + height },
+                    { x: x, y: y + height / 2 },
+                ];
+
+                handles.forEach(handle => {
+                    ctx.fillRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
+                    ctx.strokeRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
+                });
+                ctx.restore();
+            }
         }
     }
 

@@ -1,4 +1,4 @@
-export type ToolType = "selection" | "rectangle" | "circle" | "pencil" | "text" | "line" | "arrow" | "hand";
+export type ToolType = "selection" | "rectangle" | "circle" | "diamond" | "pencil" | "text" | "line" | "arrow" | "hand";
 
 export interface Point {
     x: number;
@@ -18,9 +18,13 @@ export interface Element {
     roughness: number;
     opacity: number;
     points?: Point[]; // For pencil, line, arrow
-    text?: string;    // For text
+    text?: string;
     seed: number;     // For consistent roughness
     groupId?: string; // For grouping
+    textAlign?: "left" | "center" | "right";
+    textBaseline?: "top" | "middle" | "bottom";
+    containerElementId?: string; // ID of element this text is attached to
+    link?: string; // Optional link for elements
 }
 
 export interface AppState {

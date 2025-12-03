@@ -1,7 +1,7 @@
 "use client";
 
 import { useStore } from "@/store/useStore";
-import { MousePointer2, Square, Circle, Minus, ArrowRight, Pencil, Type, Undo2 as Undo, Redo2 as Redo, Hand } from "lucide-react";
+import { MousePointer2, Square, Circle, Diamond, Minus, ArrowRight, Pencil, Type, Undo2 as Undo, Redo2 as Redo, Hand } from "lucide-react";
 import { ToolType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +14,7 @@ export default function Toolbar() {
         { id: "hand", icon: <Hand size={20} />, label: "Pan" },
         { id: "rectangle", icon: <Square size={20} />, label: "Rectangle" },
         { id: "circle", icon: <Circle size={20} />, label: "Circle" },
+        { id: "diamond", icon: <Diamond size={20} />, label: "Diamond" },
         { id: "line", icon: <Minus size={20} />, label: "Line" },
         { id: "arrow", icon: <ArrowRight size={20} />, label: "Arrow" },
         { id: "pencil", icon: <Pencil size={20} />, label: "Pencil" },
