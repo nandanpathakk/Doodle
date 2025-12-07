@@ -12,11 +12,17 @@
   --font-hand: var(--font-hand);
 }
 
+/* Excalidraw-like dark mode colors */
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #121212;
-    --foreground: #f0f0f0;
+    --foreground: #e3e3e3;
   }
+}
+
+.dark {
+  --background: #121212;
+  --foreground: #e3e3e3;
 }
 
 body {

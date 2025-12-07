@@ -7,7 +7,8 @@ export const renderScene = (
     canvas: HTMLCanvasElement,
     elements: Element[],
     appState: AppState,
-    selectionRect?: { x: number; y: number; width: number; height: number } | null
+    selectionRect: { x: number; y: number; width: number; height: number } | null | undefined, // Relaxed type
+    isDarkMode: boolean
 ) => {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -23,25 +24,30 @@ export const renderScene = (
     ctx.scale(zoom, zoom);
     ctx.translate(scrollX, scrollY);
 
+    const getAdaptiveColor = (color: string) => {
+        if (color === "transparent") return "transparent";
+        if (isDarkMode) {
+            if (color === "#000000") return "#ffffff"; // Black -> White
+            // Add other mappings if needed, but primarily we want black to be visible
+        } else {
+            if (color === "#ffffff") return "#000000"; // White -> Black (if we had white elements)
+        }
+        return color;
+    };
+
     elements.forEach((element) => {
         const { type, x, y, width, height, strokeColor, backgroundColor, strokeWidth, roughness, opacity, points, seed } = element;
 
-        // Set global alpha
-        // Note: roughjs doesn't support global alpha directly in the config object for all shapes easily, 
-        // so we might need to set ctx.globalAlpha, but roughjs resets it? 
-        // Actually roughjs draws on the context.
-        // Let's try setting it on context before drawing.
-        // But roughjs operations might not respect it if they set their own styles.
-        // Ideally we use rgba colors.
+        const effectiveStrokeColor = getAdaptiveColor(strokeColor);
+        const effectiveBackgroundColor = getAdaptiveColor(backgroundColor);
 
-        // For now, let's just render.
 
         const options = {
             seed,
-            stroke: strokeColor,
+            stroke: effectiveStrokeColor,
             strokeWidth,
             roughness,
-            fill: backgroundColor !== "transparent" ? backgroundColor : undefined,
+            fill: effectiveBackgroundColor !== "transparent" ? effectiveBackgroundColor : undefined,
             fillStyle: "hachure", // Default fill style
         };
 
@@ -55,7 +61,7 @@ export const renderScene = (
                 break;
             case "diamond":
                 // Use custom diamond renderer
-                renderDiamond(ctx, x, y, width, height, strokeColor, backgroundColor, strokeWidth);
+                renderDiamond(ctx, x, y, width, height, effectiveStrokeColor, effectiveBackgroundColor, strokeWidth);
                 break;
             case "line":
                 if (points && points.length > 0) {
@@ -67,7 +73,7 @@ export const renderScene = (
                     // Draw line
                     rc.line(points[0].x, points[0].y, points[points.length - 1].x, points[points.length - 1].y, options);
                     // Draw arrowhead
-                    drawArrowhead(ctx, points[0].x, points[0].y, points[points.length - 1].x, points[points.length - 1].y, strokeWidth, strokeColor);
+                    drawArrowhead(ctx, points[0].x, points[0].y, points[points.length - 1].x, points[points.length - 1].y, strokeWidth, effectiveStrokeColor);
                 }
                 break;
             case "pencil":
@@ -81,7 +87,7 @@ export const renderScene = (
 
                     const pathData = getSvgPathFromStroke(outlinePoints);
                     const path = new Path2D(pathData);
-                    ctx.fillStyle = strokeColor;
+                    ctx.fillStyle = effectiveStrokeColor;
                     ctx.fill(path);
                 }
                 break;
@@ -92,7 +98,7 @@ export const renderScene = (
                     // Set font
                     const fontSize = 20; // Fixed size for now
                     ctx.font = `${fontSize}px "Architects Daughter", cursive`;
-                    ctx.fillStyle = strokeColor;
+                    ctx.fillStyle = effectiveStrokeColor;
                     ctx.textAlign = element.textAlign || "left";
                     ctx.textBaseline = element.textBaseline || "top";
 
@@ -121,11 +127,18 @@ export const renderScene = (
                             }
 
                             // Clear background with white rectangle
-                            ctx.fillStyle = "#ffffff";
+                            // Should theoretically be adaptive too, but usually text background matches the container's bg which we handled above? 
+                            // Actually this is clearing the background BEHIND text if it's in a container.
+                            // If container is black (in light mode), text is white. 
+                            // This logic seems specific to clearing.
+
+                            // For simplicity, let's make the "eraser" color match the container's effective background color
+                            const containerBg = getAdaptiveColor(containerElement.backgroundColor);
+                            ctx.fillStyle = containerBg;
                             ctx.fillRect(textX - 4, textY - 2, textWidth + 8, textHeight + 4);
 
                             // Reset fill style for text
-                            ctx.fillStyle = strokeColor;
+                            ctx.fillStyle = effectiveStrokeColor;
                         }
                     }
 

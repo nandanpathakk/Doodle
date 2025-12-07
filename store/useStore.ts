@@ -12,6 +12,7 @@ interface Store {
     elements: Element[];
     appState: AppState;
     history: History;
+    isDarkMode: boolean;
 
     setTool: (tool: ToolType) => void;
     addElement: (element: Element) => void;
@@ -21,6 +22,8 @@ interface Store {
     setZoom: (zoom: number) => void;
     setScroll: (x: number, y: number) => void;
     setElements: (elements: Element[]) => void;
+    clearElements: () => void;
+    toggleDarkMode: () => void;
 
     addToHistory: () => void;
     undo: () => void;
@@ -43,6 +46,7 @@ export const useStore = create<Store>()(
                 past: [],
                 future: [],
             },
+            isDarkMode: false,
 
             setTool: (tool) =>
                 set((state) => ({ appState: { ...state.appState, tool } })),
@@ -65,6 +69,9 @@ export const useStore = create<Store>()(
                     elements: state.elements.filter((el) => el.id !== id),
                 })),
 
+            clearElements: () =>
+                set(() => ({ elements: [] })),
+
             setSelection: (ids) =>
                 set((state) => ({ appState: { ...state.appState, selection: ids } })),
 
@@ -73,6 +80,9 @@ export const useStore = create<Store>()(
 
             setScroll: (x, y) =>
                 set((state) => ({ appState: { ...state.appState, scrollX: x, scrollY: y } })),
+
+            toggleDarkMode: () =>
+                set((state) => ({ isDarkMode: !state.isDarkMode })),
 
             addToHistory: () =>
                 set((state) => ({

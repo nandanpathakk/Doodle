@@ -11,7 +11,7 @@ import { nanoid } from "nanoid";
 
 export default function Canvas() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const { elements, appState, setElements, setZoom, setScroll } = useStore();
+    const { elements, appState, setElements, setZoom, setScroll, isDarkMode } = useStore();
 
     const {
         cursor,
@@ -38,9 +38,9 @@ export default function Canvas() {
                 canvas.width = window.innerWidth;
                 canvas.height = window.innerHeight;
             }
-            renderScene(canvas, elements, appState, selectionRect);
+            renderScene(canvas, elements, appState, selectionRect, isDarkMode);
         }
-    }, [elements, appState, selectionRect]);
+    }, [elements, appState, selectionRect, isDarkMode]);
 
     useEffect(() => {
         const handleResize = () => {
@@ -48,12 +48,12 @@ export default function Canvas() {
             if (canvas) {
                 canvas.width = window.innerWidth;
                 canvas.height = window.innerHeight;
-                renderScene(canvas, elements, appState, selectionRect);
+                renderScene(canvas, elements, appState, selectionRect, isDarkMode);
             }
         };
         window.addEventListener("resize", handleResize);
         return () => window.removeEventListener("resize", handleResize);
-    }, [elements, appState, selectionRect]);
+    }, [elements, appState, selectionRect, isDarkMode]);
 
     // Add non-passive wheel listener to prevent browser zoom
     useEffect(() => {
