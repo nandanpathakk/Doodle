@@ -1,9 +1,9 @@
 import { AppState, Element, ToolType } from "@/lib/types";
 
 export interface Tool {
-    onMouseDown: (e: React.MouseEvent, context: ToolContext) => void;
-    onMouseMove: (e: React.MouseEvent, context: ToolContext) => void;
-    onMouseUp: (e: React.MouseEvent, context: ToolContext) => void;
+    onMouseDown: (e: React.MouseEvent | React.TouchEvent, context: ToolContext) => void;
+    onMouseMove: (e: React.MouseEvent | React.TouchEvent, context: ToolContext) => void;
+    onMouseUp: (e: React.MouseEvent | React.TouchEvent, context: ToolContext) => void;
 }
 
 export interface ToolContext {

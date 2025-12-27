@@ -19,7 +19,7 @@ export class SelectionTool implements Tool {
     // For now, we might need to add setSelectionRect to context or handle it differently.
     // Let's assume we add setSelectionRect to context.
 
-    onMouseDown(e: React.MouseEvent, context: ToolContext) {
+    onMouseDown(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
         const { x, y, elements, appState, setSelection, addToHistory, setSelectionRect: setContextSelectionRect } = context as any; // Cast to any to access new context props
         // Note: We need to update ToolContext to include setSelectionRect
 
@@ -83,7 +83,7 @@ export class SelectionTool implements Tool {
         }
     }
 
-    onMouseMove(e: React.MouseEvent, context: ToolContext) {
+    onMouseMove(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
         const { x, y, elements, appState, updateElement, setCursor, addToHistory, setSelectionRect: setContextSelectionRect } = context as any;
 
         // Cursor logic
@@ -155,7 +155,7 @@ export class SelectionTool implements Tool {
         this.lastMousePos = { x, y };
     }
 
-    onMouseUp(e: React.MouseEvent, context: ToolContext) {
+    onMouseUp(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
         const { elements, setSelection, setSelectionRect: setContextSelectionRect } = context as any;
 
         if (this.isSelecting && this.selectionRect) {

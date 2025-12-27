@@ -24,7 +24,9 @@ export interface Element {
     textAlign?: "left" | "center" | "right";
     textBaseline?: "top" | "middle" | "bottom";
     containerElementId?: string; // ID of element this text is attached to
+    onContainerBorder?: boolean; // If text is on the border of the container
     link?: string; // Optional link for elements
+    version: number; // Version for cache invalidation
 }
 
 export interface AppState {

@@ -6,6 +6,7 @@ import { renderScene } from "@/lib/render";
 import { getInitialContent } from "@/lib/initialContent";
 import { useCanvasLogic } from "@/hooks/useCanvasLogic";
 import CanvasTextInput from "./CanvasTextInput";
+import WelcomeScreen from "./WelcomeScreen";
 import ZoomIndicator from "./ZoomIndicator";
 import { nanoid } from "nanoid";
 
@@ -23,6 +24,9 @@ export default function Canvas() {
         handleMouseDown,
         handleMouseMove,
         handleMouseUp,
+        handleTouchStart,
+        handleTouchMove,
+        handleTouchEnd,
     } = useCanvasLogic();
 
     useEffect(() => {
@@ -38,9 +42,9 @@ export default function Canvas() {
                 canvas.width = window.innerWidth;
                 canvas.height = window.innerHeight;
             }
-            renderScene(canvas, elements, appState, selectionRect, isDarkMode);
+            renderScene(canvas, elements, appState, selectionRect, isDarkMode, textInput?.id);
         }
-    }, [elements, appState, selectionRect, isDarkMode]);
+    }, [elements, appState, selectionRect, isDarkMode, textInput]);
 
     useEffect(() => {
         const handleResize = () => {
@@ -48,12 +52,12 @@ export default function Canvas() {
             if (canvas) {
                 canvas.width = window.innerWidth;
                 canvas.height = window.innerHeight;
-                renderScene(canvas, elements, appState, selectionRect, isDarkMode);
+                renderScene(canvas, elements, appState, selectionRect, isDarkMode, textInput?.id);
             }
         };
         window.addEventListener("resize", handleResize);
         return () => window.removeEventListener("resize", handleResize);
-    }, [elements, appState, selectionRect, isDarkMode]);
+    }, [elements, appState, selectionRect, isDarkMode, textInput]);
 
     // Add non-passive wheel listener to prevent browser zoom
     useEffect(() => {
@@ -127,6 +131,9 @@ export default function Canvas() {
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
                 onWheel={handleWheel}
                 onDoubleClick={handleDoubleClick}
             >
@@ -135,6 +142,7 @@ export default function Canvas() {
             {textInput && (
                 <CanvasTextInput textInput={textInput} setTextInput={setTextInput} />
             )}
+            {elements.length === 0 && <WelcomeScreen />}
             <ZoomIndicator />
         </>
     );

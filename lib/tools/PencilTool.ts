@@ -5,7 +5,7 @@ import { Element } from "@/lib/types";
 export class PencilTool implements Tool {
     private currentId: string | null = null;
 
-    onMouseDown(e: React.MouseEvent, context: ToolContext) {
+    onMouseDown(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
         const { x, y, addElement, addToHistory } = context;
 
         this.currentId = nanoid();
@@ -25,12 +25,13 @@ export class PencilTool implements Tool {
             opacity: 100,
             points: [{ x, y }],
             seed: Math.floor(Math.random() * 2 ** 31),
+            version: 1,
         };
 
         addElement(newElement);
     }
 
-    onMouseMove(e: React.MouseEvent, context: ToolContext) {
+    onMouseMove(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
         if (!this.currentId) return;
 
         const { x, y, updateElement, elements } = context;
@@ -42,7 +43,7 @@ export class PencilTool implements Tool {
         }
     }
 
-    onMouseUp(e: React.MouseEvent, context: ToolContext) {
+    onMouseUp(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
         if (!this.currentId) return;
 
         const { setTool, setSelection } = context;

@@ -60,7 +60,7 @@ export const useStore = create<Store>()(
             updateElement: (id, updates) =>
                 set((state) => ({
                     elements: state.elements.map((el) =>
-                        el.id === id ? { ...el, ...updates } : el
+                        el.id === id ? { ...el, ...updates, version: el.version + 1 } : el
                     ),
                 })),
 
@@ -122,7 +122,29 @@ export const useStore = create<Store>()(
         }),
         {
             name: "doodle-storage",
-            partialize: (state) => ({ elements: state.elements }), // Only persist elements
+            partialize: (state) => ({
+                elements: state.elements,
+                isDarkMode: state.isDarkMode
+            }),
+            storage: {
+                getItem: (name) => {
+                    const str = localStorage.getItem(name);
+                    return str ? JSON.parse(str) : null;
+                },
+                setItem: (name, value) => {
+                    // We need a debounced setItem. 
+                    // Since this is a pure function, we need a way to store the timer.
+                    // We can use a closure outside, but cleaner to just do it here with a global or module-level var.
+                    // But wait, the `value` is the computed state.
+
+                    // Simple debounce implementation:
+                    clearTimeout((window as any)._doodle_save_timeout);
+                    (window as any)._doodle_save_timeout = setTimeout(() => {
+                        localStorage.setItem(name, JSON.stringify(value));
+                    }, 1000); // Save 1 second after last change
+                },
+                removeItem: (name) => localStorage.removeItem(name),
+            },
         }
     )
 );

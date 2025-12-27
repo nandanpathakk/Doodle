@@ -3,12 +3,31 @@ import { Element, AppState } from "./types";
 import { getStroke } from "perfect-freehand";
 import { drawArrowhead, renderDiamond } from "./renderHelpers";
 
+// Shape Cache
+// Shape Cache
+const shapeCache = new Map<string, {
+    version: number;
+    shape?: any;
+    path?: Path2D;
+    strokeColor: string;
+    backgroundColor: string;
+    strokeWidth: number;
+    roughness: number;
+    width: number;
+    height: number;
+    pointsLength?: number;
+    relStart?: { x: number, y: number };
+    relEnd?: { x: number, y: number };
+    text?: string;
+}>();
+
 export const renderScene = (
     canvas: HTMLCanvasElement,
     elements: Element[],
     appState: AppState,
     selectionRect: { x: number; y: number; width: number; height: number } | null | undefined, // Relaxed type
-    isDarkMode: boolean
+    isDarkMode: boolean,
+    editingId: string | null = null
 ) => {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -27,20 +46,22 @@ export const renderScene = (
     const getAdaptiveColor = (color: string) => {
         if (color === "transparent") return "transparent";
         if (isDarkMode) {
-            if (color === "#000000") return "#ffffff"; // Black -> White
+            if (color === "#000000") return "#e4e4e7"; // Softer White (Zinc-200) instead of pure white for eye comfort
             // Add other mappings if needed, but primarily we want black to be visible
         } else {
-            if (color === "#ffffff") return "#000000"; // White -> Black (if we had white elements)
+            if (color === "#ffffff") return "#18181b"; // White -> Zinc-900 (if we had white elements)
         }
         return color;
     };
 
+    // Create generator for manual shape creation
+    const generator = rough.generator();
+
     elements.forEach((element) => {
-        const { type, x, y, width, height, strokeColor, backgroundColor, strokeWidth, roughness, opacity, points, seed } = element;
+        const { type, x, y, width, height, strokeColor, backgroundColor, strokeWidth, roughness, opacity, points, seed, version } = element;
 
         const effectiveStrokeColor = getAdaptiveColor(strokeColor);
         const effectiveBackgroundColor = getAdaptiveColor(backgroundColor);
-
 
         const options = {
             seed,
@@ -48,106 +69,219 @@ export const renderScene = (
             strokeWidth,
             roughness,
             fill: effectiveBackgroundColor !== "transparent" ? effectiveBackgroundColor : undefined,
-            fillStyle: "hachure", // Default fill style
+            fillStyle: "hachure",
         };
 
-        switch (type) {
-            case "rectangle":
-                rc.rectangle(x, y, width, height, options);
-                break;
-            case "circle":
-                // roughjs ellipse takes center x, y, width, height
-                rc.ellipse(x + width / 2, y + height / 2, width, height, options);
-                break;
-            case "diamond":
-                // Use custom diamond renderer
-                renderDiamond(ctx, x, y, width, height, effectiveStrokeColor, effectiveBackgroundColor, strokeWidth);
-                break;
-            case "line":
-                if (points && points.length > 0) {
-                    rc.line(points[0].x, points[0].y, points[points.length - 1].x, points[points.length - 1].y, options);
-                }
-                break;
-            case "arrow":
-                if (points && points.length > 0) {
-                    // Draw line
-                    rc.line(points[0].x, points[0].y, points[points.length - 1].x, points[points.length - 1].y, options);
-                    // Draw arrowhead
-                    drawArrowhead(ctx, points[0].x, points[0].y, points[points.length - 1].x, points[points.length - 1].y, strokeWidth, effectiveStrokeColor);
-                }
-                break;
-            case "pencil":
-                if (points && points.length > 0) {
-                    const outlinePoints = getStroke(points, {
-                        size: strokeWidth * 2,
-                        thinning: 0.5,
-                        smoothing: 0.5,
-                        streamline: 0.5,
-                    });
+        // Cache Management
+        let cached = shapeCache.get(element.id);
 
-                    const pathData = getSvgPathFromStroke(outlinePoints);
-                    const path = new Path2D(pathData);
-                    ctx.fillStyle = effectiveStrokeColor;
-                    ctx.fill(path);
-                }
-                break;
-            case "text":
-                if (element.text) {
-                    ctx.save();
+        let needsRegenerate = true;
 
-                    // Set font
-                    const fontSize = 20; // Fixed size for now
-                    ctx.font = `${fontSize}px "Architects Daughter", cursive`;
-                    ctx.fillStyle = effectiveStrokeColor;
-                    ctx.textAlign = element.textAlign || "left";
-                    ctx.textBaseline = element.textBaseline || "top";
+        // Check cache validity using heuristics to allow reuse during drag (when version changes but shape doesn't)
+        if (cached) {
+            // 1. Common checks
+            if (cached.strokeColor === effectiveStrokeColor &&
+                cached.backgroundColor === effectiveBackgroundColor &&
+                cached.strokeWidth === strokeWidth &&
+                cached.roughness === roughness) {
 
-                    // If text is attached to a container, clear background behind text
-                    if (element.containerElementId) {
-                        const containerElement = elements.find(el => el.id === element.containerElementId);
-                        if (containerElement && containerElement.backgroundColor !== "transparent") {
-                            // Measure text
-                            const metrics = ctx.measureText(element.text);
-                            const textWidth = metrics.width;
-                            const textHeight = fontSize * 1.2; // Approximate height
-
-                            // Calculate text position based on alignment
-                            let textX = x;
-                            if (element.textAlign === "center") {
-                                textX = x - textWidth / 2;
-                            } else if (element.textAlign === "right") {
-                                textX = x - textWidth;
-                            }
-
-                            let textY = y;
-                            if (element.textBaseline === "middle") {
-                                textY = y - textHeight / 2;
-                            } else if (element.textBaseline === "bottom") {
-                                textY = y - textHeight;
-                            }
-
-                            // Clear background with white rectangle
-                            // Should theoretically be adaptive too, but usually text background matches the container's bg which we handled above? 
-                            // Actually this is clearing the background BEHIND text if it's in a container.
-                            // If container is black (in light mode), text is white. 
-                            // This logic seems specific to clearing.
-
-                            // For simplicity, let's make the "eraser" color match the container's effective background color
-                            const containerBg = getAdaptiveColor(containerElement.backgroundColor);
-                            ctx.fillStyle = containerBg;
-                            ctx.fillRect(textX - 4, textY - 2, textWidth + 8, textHeight + 4);
-
-                            // Reset fill style for text
-                            ctx.fillStyle = effectiveStrokeColor;
-                        }
+                // 2. Type-specific checks
+                if (type === "rectangle" || type === "circle" || type === "diamond") {
+                    // For box shapes, if dimensions match, we can reuse even if x/y changed
+                    if (cached.width === width && cached.height === height) {
+                        needsRegenerate = false;
                     }
+                } else if ((type === "line" || type === "arrow" || type === "pencil") && points && points.length > 0) {
+                    // For point shapes, check if points moved *relative* to x,y have changed
+                    // Heuristic: Check length and first/last point relative positions
+                    // precise enough for dragging. Resizing/editing changes these relative values.
+                    const relStartX = points[0].x - x;
+                    const relStartY = points[0].y - y;
+                    const relEndX = points[points.length - 1].x - x;
+                    const relEndY = points[points.length - 1].y - y;
 
-                    // Draw text
-                    ctx.fillText(element.text, x, y);
-                    ctx.restore();
+                    if (cached.pointsLength === points.length &&
+                        cached.relStart?.x === relStartX && cached.relStart?.y === relStartY &&
+                        cached.relEnd?.x === relEndX && cached.relEnd?.y === relEndY) {
+                        needsRegenerate = false;
+                    }
+                } else if (type === "text") {
+                    // Text re-generation is cheap-ish, but let's check version/content
+                    if (cached.version === version && cached.text === element.text) {
+                        needsRegenerate = false;
+                    }
                 }
-                break;
+            }
         }
+
+        if (needsRegenerate) {
+            let shape = null;
+            let path = null;
+
+            // Relative Generation (Generate at 0,0 or relative to x,y)
+            switch (type) {
+                case "rectangle":
+                    shape = generator.rectangle(0, 0, width, height, options);
+                    break;
+                case "circle":
+                    // roughjs ellipse takes center. Center relative to x,y is w/2, h/2
+                    shape = generator.ellipse(width / 2, height / 2, width, height, options);
+                    break;
+                case "diamond":
+                    // Custom render function doesn't return rough shape, handled in fallback? 
+                    // No, let's just make diamond dynamic for now, or cache it if we convert to path?
+                    // Keep custom for now, but optimize: cache is just a marker to skip?
+                    // Diamond uses context drawing. We can cache a Path2D or just draw relative.
+                    // For now, let's treat diamond as always regenerate or just draw relative?
+                    // Actually, renderDiamond updates context. 
+                    // Let's stick to dynamic for diamond for now (it's fast canvas).
+                    break;
+                case "line":
+                case "arrow":
+                    if (points && points.length > 0) {
+                        // Normalize points to be relative to element.x, element.y
+                        // This is crucial for "Sticker" behavior
+                        const p0 = { x: points[0].x - x, y: points[0].y - y };
+                        const pN = { x: points[points.length - 1].x - x, y: points[points.length - 1].y - y };
+                        shape = generator.line(p0.x, p0.y, pN.x, pN.y, options);
+                    }
+                    break;
+                case "pencil":
+                    if (points && points.length > 0) {
+                        // Normalize all points
+                        const relPoints = points.map(p => ({ x: p.x - x, y: p.y - y }));
+
+                        const outlinePoints = getStroke(relPoints, {
+                            size: strokeWidth * 2,
+                            thinning: 0.5,
+                            smoothing: 0.5,
+                            streamline: 0.5,
+                        });
+                        const pathData = getSvgPathFromStroke(outlinePoints);
+                        path = new Path2D(pathData);
+                    }
+                    break;
+            }
+
+            // Save to Cache
+            const relStart = (points && points.length) ? { x: points[0].x - x, y: points[0].y - y } : undefined;
+            const relEnd = (points && points.length) ? { x: points[points.length - 1].x - x, y: points[points.length - 1].y - y } : undefined;
+
+            cached = {
+                version,
+                shape,
+                path,
+                strokeColor: effectiveStrokeColor,
+                backgroundColor: effectiveBackgroundColor,
+                strokeWidth,
+                roughness,
+                width,
+                height,
+                pointsLength: points?.length,
+                relStart,
+                relEnd,
+                text: element.text
+            };
+            shapeCache.set(element.id, cached);
+        }
+
+        // Draw Cached (or fresh) Shape
+        // Apply Translation for Relative Drawing
+        ctx.save();
+        ctx.translate(x, y);
+
+        if (cached && (cached.shape || cached.path)) {
+            if (cached.shape) {
+                rc.draw(cached.shape);
+            }
+            if (cached.path) {
+                ctx.fillStyle = effectiveStrokeColor;
+                ctx.fill(cached.path);
+            }
+        } else {
+            // Fallbacks for custom implementations that require absolute global coords or special context
+            // (Diamond, Text, ArrowHead)
+            // Note: Since we translated ctx by (x,y), we must draw at (0,0) or relative offsets.
+
+            ctx.translate(-x, -y); // Undo translation for legacy/absolute renderers if needed?
+            // Actually, it's better to adapt them to relative.
+
+            // ... But refactoring everything might be risky.
+            // Let's Restore context to Absolute for Fallbacks to be safe.
+            ctx.restore();
+
+            // NEW CONTEXT for Absolute Rendering
+            ctx.save();
+
+            switch (type) {
+                case "diamond":
+                    renderDiamond(ctx, x, y, width, height, effectiveStrokeColor, effectiveBackgroundColor, strokeWidth);
+                    break;
+                case "arrow":
+                    // Arrowhead (cached line is drawn above, but head is separate)
+                    // Head needs to be drawn. 
+                    if (points && points.length > 0) {
+                        drawArrowhead(ctx, points[0].x, points[0].y, points[points.length - 1].x, points[points.length - 1].y, strokeWidth, effectiveStrokeColor);
+                    }
+                    break;
+                case "text":
+                    // Text Logic (Absolute)
+                    if (element.text) {
+                        ctx.save();
+                        const fontSize = 20;
+                        ctx.font = `${fontSize}px "Architects Daughter", cursive`;
+                        ctx.fillStyle = effectiveStrokeColor;
+                        const lines = element.text.split("\n");
+                        const lineHeight = fontSize * 1.2;
+                        let maxLineWidth = 0;
+                        lines.forEach(line => {
+                            const lineMetrics = ctx.measureText(line);
+                            maxLineWidth = Math.max(maxLineWidth, lineMetrics.width);
+                        });
+                        const totalHeight = lines.length * lineHeight;
+                        let boxX = x;
+                        let boxY = y;
+                        if (element.textAlign === "center") {
+                            boxX = x - maxLineWidth / 2;
+                        } else if (element.textAlign === "right") {
+                            boxX = x - maxLineWidth;
+                        }
+                        if (element.textBaseline === "middle") {
+                            boxY = y - totalHeight / 2;
+                        } else if (element.textBaseline === "bottom") {
+                            boxY = y - totalHeight;
+                        }
+                        if (element.onContainerBorder) {
+                            const eraserColor = isDarkMode ? "#121212" : "#ffffff";
+                            ctx.fillStyle = eraserColor;
+                            ctx.fillRect(boxX - 4, boxY - 2, maxLineWidth + 8, totalHeight + 4);
+                        } else if (element.containerElementId) {
+                            const containerElement = elements.find(el => el.id === element.containerElementId);
+                            if (containerElement && containerElement.backgroundColor !== "transparent") {
+                                const containerBg = getAdaptiveColor(containerElement.backgroundColor);
+                                ctx.fillStyle = containerBg;
+                                ctx.fillRect(boxX - 4, boxY - 2, maxLineWidth + 8, totalHeight + 4);
+                            }
+                        }
+                        ctx.fillStyle = effectiveStrokeColor;
+                        ctx.textBaseline = "top";
+                        ctx.textAlign = element.textAlign || "left";
+                        if (element.id !== editingId) {
+                            lines.forEach((line, index) => {
+                                ctx.fillText(line, x, boxY + index * lineHeight);
+                            });
+                        }
+                        ctx.restore();
+                    }
+                    break;
+            }
+
+            // dummy save to match indentation
+            ctx.save();
+            ctx.restore();
+        }
+
+        ctx.restore();
     });
 
     // Draw selection box

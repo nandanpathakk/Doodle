@@ -95,17 +95,72 @@ export function isPointInElement(x: number, y: number, element: Element): boolea
     const x2 = Math.max(ex, ex + width);
     const y2 = Math.max(ey, ey + height);
 
+    // Hit test threshold/padding
+    const hitThreshold = 10;
+
     switch (type) {
         case "rectangle":
         case "text":
-            return x >= x1 && x <= x2 && y >= y1 && y <= y2;
+            return x >= x1 - hitThreshold && x <= x2 + hitThreshold &&
+                y >= y1 - hitThreshold && y <= y2 + hitThreshold;
         case "circle":
-            // Ellipse hit test
+            // Ellipse hit test with threshold
+            // Broad phase first
+            if (x < x1 - hitThreshold || x > x2 + hitThreshold || y < y1 - hitThreshold || y > y2 + hitThreshold) return false;
+
             const h = x1 + (x2 - x1) / 2;
             const k = y1 + (y2 - y1) / 2;
-            const a = (x2 - x1) / 2;
-            const b = (y2 - y1) / 2;
+            const a = (x2 - x1) / 2 + hitThreshold; // Inflate radius
+            const b = (y2 - y1) / 2 + hitThreshold;
             return ((x - h) ** 2) / (a ** 2) + ((y - k) ** 2) / (b ** 2) <= 1;
+        default:
+            return false;
+    }
+}
+
+export function isPointOnBorder(x: number, y: number, element: Element, threshold: number = 20): boolean { // Increased default threshold
+    const { type, x: ex, y: ey, width, height } = element;
+
+    // Normalize bounds
+    const x1 = Math.min(ex, ex + width);
+    const y1 = Math.min(ey, ey + height);
+    const x2 = Math.max(ex, ex + width);
+    const y2 = Math.max(ey, ey + height);
+    const w = Math.abs(width);
+    const h = Math.abs(height);
+
+    switch (type) {
+        case "rectangle":
+        case "diamond": // Treat diamond as rect for now or implement specific logic? 
+            // User said "shape border side", usually implies rect/circle. 
+            // Let's implement rect for now, diamond logic is 4 lines.
+            // Check distance to 4 sides with loose endpoints
+            const onLeft = Math.abs(x - x1) < threshold && y >= y1 - threshold && y <= y2 + threshold;
+            const onRight = Math.abs(x - x2) < threshold && y >= y1 - threshold && y <= y2 + threshold;
+            const onTop = Math.abs(y - y1) < threshold && x >= x1 - threshold && x <= x2 + threshold;
+            const onBottom = Math.abs(y - y2) < threshold && x >= x1 - threshold && x <= x2 + threshold;
+            return onLeft || onRight || onTop || onBottom;
+
+        case "circle":
+            // Distance from center to point should be close to radius
+            const cx = x1 + w / 2;
+            const cy = y1 + h / 2;
+            const rx = w / 2;
+            const ry = h / 2;
+
+            // Normalized distance equation for ellipse is: dest = sqrt( (x-cx)^2/rx^2 + (y-cy)^2/ry^2 )
+            // If dest is close to 1, it's on border.
+            // Simplified for circle (w=h): distance(point, center) approx radius
+
+            const normalizedDist = Math.sqrt(Math.pow((x - cx) / rx, 2) + Math.pow((y - cy) / ry, 2));
+            // Allow larger threshold for circle too
+            return Math.abs(normalizedDist - 1) < (threshold / Math.min(rx, ry));
+
+        case "line":
+        case "arrow":
+            // Reuse isPointInElement logic which is already distance based
+            return isPointInElement(x, y, element);
+
         default:
             return false;
     }
@@ -144,9 +199,9 @@ export const getSelectionBounds = (elements: Element[]) => {
 };
 
 export const getResizeHandleAtPosition = (x: number, y: number, bounds: { x: number, y: number, width: number, height: number }, zoom: number) => {
-    const handleSize = 8 / zoom;
+    const handleSize = 20 / zoom; // Increased visual/logical size
     const { x: bx, y: by, width, height } = bounds;
-    const margin = 8 / zoom;
+    const margin = 20 / zoom; // Larger margin for hit checking
 
     // Bounds with margin
     const mx = bx - margin;

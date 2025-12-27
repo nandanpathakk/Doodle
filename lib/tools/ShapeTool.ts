@@ -9,7 +9,7 @@ export class ShapeTool implements Tool {
 
     constructor(private type: ToolType) { }
 
-    onMouseDown(e: React.MouseEvent, context: ToolContext) {
+    onMouseDown(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
         const { x, y, addElement, addToHistory } = context;
 
         this.startX = x;
@@ -32,12 +32,13 @@ export class ShapeTool implements Tool {
             opacity: 100,
             points: (this.type === "line" || this.type === "arrow") ? [{ x, y }] : undefined,
             seed: Math.floor(Math.random() * 2 ** 31),
+            version: 1,
         };
 
         addElement(newElement);
     }
 
-    onMouseMove(e: React.MouseEvent, context: ToolContext) {
+    onMouseMove(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
         if (!this.currentId) return;
 
         const { x, y, updateElement } = context;
@@ -57,7 +58,7 @@ export class ShapeTool implements Tool {
         }
     }
 
-    onMouseUp(e: React.MouseEvent, context: ToolContext) {
+    onMouseUp(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
         if (!this.currentId) return;
 
         const { updateElement, setTool, setSelection, elements } = context;
