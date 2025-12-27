@@ -115,8 +115,8 @@ export const renderScene = (
         }
 
         if (needsRegenerate) {
-            let shape = null;
-            let path = null;
+            let shape: any = null;
+            let path: Path2D | undefined = undefined;
 
             // Relative Generation (Generate at 0,0 or relative to x,y)
             switch (type) {
