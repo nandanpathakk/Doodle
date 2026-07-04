@@ -1,57 +1,88 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStore } from "@/store/useStore";
 import { renderScene } from "@/lib/render";
-import { getInitialContent } from "@/lib/initialContent";
 import { useCanvasLogic } from "@/hooks/useCanvasLogic";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { getElementAtPosition } from "@/lib/math";
 import CanvasTextInput from "./CanvasTextInput";
 import WelcomeScreen from "./WelcomeScreen";
 import ZoomIndicator from "./ZoomIndicator";
-import { nanoid } from "nanoid";
+import ContextMenu, { ContextMenuState } from "./ContextMenu";
 
 export default function Canvas() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const { elements, appState, setElements, setZoom, setScroll, isDarkMode } = useStore();
+    // Selector subscriptions: only re-render Canvas when these specific slices change
+    // (avoids re-rendering on unrelated state like currentStyle or history).
+    const elements = useStore((s) => s.elements);
+    const appState = useStore((s) => s.appState);
+    const isDarkMode = useStore((s) => s.isDarkMode);
+    const setSelection = useStore((s) => s.setSelection);
+    const setZoom = useStore((s) => s.setZoom);
+    const setScroll = useStore((s) => s.setScroll);
+    const [fontsReady, setFontsReady] = useState(false);
+    const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+    const frameRef = useRef<number | undefined>(undefined);
 
     const {
         cursor,
         textInput,
         selectionRect,
-        isPanning,
-        setIsPanning,
         setTextInput,
         handleMouseDown,
         handleMouseMove,
         handleMouseUp,
+        handleDoubleClick,
         handleTouchStart,
         handleTouchMove,
         handleTouchEnd,
     } = useCanvasLogic();
 
+    useKeyboardShortcuts();
+
+    // Re-render once the hand-drawn font is loaded so text metrics are correct.
     useEffect(() => {
-        if (elements.length === 0) {
-            setElements(getInitialContent());
-        }
+        const fonts = typeof document !== "undefined" ? document.fonts : undefined;
+        if (!fonts) return; // no Font Loading API: metrics already usable, no re-render needed
+        fonts.ready.then(() => setFontsReady(true));
     }, []);
 
+    // Size the canvas backing store to the device pixel ratio so drawings stay crisp on HiDPI/Retina displays.
+    const sizeCanvas = (canvas: HTMLCanvasElement) => {
+        const dpr = window.devicePixelRatio || 1;
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const targetW = Math.floor(w * dpr);
+        const targetH = Math.floor(h * dpr);
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+            canvas.width = targetW;
+            canvas.height = targetH;
+            canvas.style.width = `${w}px`;
+            canvas.style.height = `${h}px`;
+        }
+    };
+
+    // Coalesce draws to one per animation frame, so a burst of store updates
+    // (e.g. dragging many elements) results in a single vsync-aligned render.
     useLayoutEffect(() => {
         const canvas = canvasRef.current;
-        if (canvas) {
-            if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
-                canvas.width = window.innerWidth;
-                canvas.height = window.innerHeight;
-            }
+        if (!canvas) return;
+        if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
+        frameRef.current = requestAnimationFrame(() => {
+            sizeCanvas(canvas);
             renderScene(canvas, elements, appState, selectionRect, isDarkMode, textInput?.id);
-        }
-    }, [elements, appState, selectionRect, isDarkMode, textInput]);
+        });
+        return () => {
+            if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
+        };
+    }, [elements, appState, selectionRect, isDarkMode, textInput, fontsReady]);
 
     useEffect(() => {
         const handleResize = () => {
             const canvas = canvasRef.current;
             if (canvas) {
-                canvas.width = window.innerWidth;
-                canvas.height = window.innerHeight;
+                sizeCanvas(canvas);
                 renderScene(canvas, elements, appState, selectionRect, isDarkMode, textInput?.id);
             }
         };
@@ -74,26 +105,22 @@ export default function Canvas() {
         return () => canvas.removeEventListener("wheel", onWheel);
     }, []);
 
-    // Grouping shortcut
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === "g") {
-                e.preventDefault();
-                if (appState.selection.length > 1) {
-                    const groupId = nanoid();
-                    const updates = elements.map(el =>
-                        appState.selection.includes(el.id) ? { ...el, groupId } : el
-                    );
-                    setElements(updates);
-                }
+    const handleContextMenu = (e: React.MouseEvent) => {
+        e.preventDefault();
+        const worldX = (e.clientX - appState.scrollX) / appState.zoom;
+        const worldY = (e.clientY - appState.scrollY) / appState.zoom;
+        const el = getElementAtPosition(worldX, worldY, elements);
+        if (el) {
+            if (!appState.selection.includes(el.id)) {
+                const ids = el.groupId
+                    ? elements.filter((e2) => e2.groupId === el.groupId).map((e2) => e2.id)
+                    : [el.id];
+                setSelection(ids);
             }
-        };
-        window.addEventListener("keydown", handleKeyDown);
-        return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [appState.selection, elements]);
-
-    const handleDoubleClick = () => {
-        setIsPanning(!isPanning);
+        } else {
+            setSelection([]);
+        }
+        setContextMenu({ x: e.clientX, y: e.clientY });
     };
 
     const handleWheel = (e: React.WheelEvent) => {
@@ -136,11 +163,17 @@ export default function Canvas() {
                 onTouchEnd={handleTouchEnd}
                 onWheel={handleWheel}
                 onDoubleClick={handleDoubleClick}
+                onContextMenu={handleContextMenu}
+                role="application"
+                aria-label="Drawing canvas"
             >
                 Canvas not supported
             </canvas>
             {textInput && (
                 <CanvasTextInput textInput={textInput} setTextInput={setTextInput} />
+            )}
+            {contextMenu && (
+                <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
             )}
             {elements.length === 0 && <WelcomeScreen />}
             <ZoomIndicator />

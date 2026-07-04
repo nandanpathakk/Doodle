@@ -1,4 +1,4 @@
-export type ToolType = "selection" | "rectangle" | "circle" | "diamond" | "pencil" | "text" | "line" | "arrow" | "hand";
+export type ToolType = "selection" | "rectangle" | "circle" | "diamond" | "pencil" | "text" | "line" | "arrow" | "hand" | "eraser";
 
 export interface Point {
     x: number;
@@ -26,8 +26,16 @@ export interface Element {
     containerElementId?: string; // ID of element this text is attached to
     onContainerBorder?: boolean; // If text is on the border of the container
     link?: string; // Optional link for elements
+    strokeStyle?: StrokeStyle;   // solid / dashed / dotted
+    fillStyle?: FillStyle;       // hachure / solid / cross-hatch
+    edges?: Edges;               // sharp / round corners (rectangles)
+    fontSize?: number;           // For text
     version: number; // Version for cache invalidation
 }
+
+export type StrokeStyle = "solid" | "dashed" | "dotted";
+export type FillStyle = "hachure" | "solid" | "cross-hatch";
+export type Edges = "sharp" | "round";
 
 export interface AppState {
     tool: ToolType;

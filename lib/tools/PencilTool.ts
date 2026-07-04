@@ -1,6 +1,7 @@
 import { Tool, ToolContext } from "./Tool";
 import { nanoid } from "nanoid";
 import { Element } from "@/lib/types";
+import { useStore } from "@/store/useStore";
 
 export class PencilTool implements Tool {
     private currentId: string | null = null;
@@ -11,6 +12,7 @@ export class PencilTool implements Tool {
         this.currentId = nanoid();
         addToHistory();
 
+        const style = useStore.getState().currentStyle;
         const newElement: Element = {
             id: this.currentId,
             type: "pencil",
@@ -18,11 +20,12 @@ export class PencilTool implements Tool {
             y,
             width: 0,
             height: 0,
-            strokeColor: "#000000",
-            backgroundColor: "transparent",
-            strokeWidth: 2,
-            roughness: 1,
-            opacity: 100,
+            strokeColor: style.strokeColor,
+            backgroundColor: style.backgroundColor,
+            strokeWidth: style.strokeWidth,
+            roughness: style.roughness,
+            opacity: style.opacity,
+            strokeStyle: style.strokeStyle,
             points: [{ x, y }],
             seed: Math.floor(Math.random() * 2 ** 31),
             version: 1,

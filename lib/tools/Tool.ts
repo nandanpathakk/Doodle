@@ -14,6 +14,7 @@ export interface ToolContext {
     setElements: (elements: Element[]) => void;
     updateElement: (id: string, updates: Partial<Element>) => void;
     addElement: (element: Element) => void;
+    removeElement: (id: string) => void;
     setSelection: (ids: string[]) => void;
     setTool: (tool: ToolType) => void;
     setCursor: (cursor: string) => void;

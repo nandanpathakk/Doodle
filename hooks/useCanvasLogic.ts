@@ -5,15 +5,18 @@ import { ShapeTool } from "@/lib/tools/ShapeTool";
 import { PencilTool } from "@/lib/tools/PencilTool";
 import { TextTool } from "@/lib/tools/TextTool";
 import { SelectionTool } from "@/lib/tools/SelectionTool";
+import { EraserTool } from "@/lib/tools/EraserTool";
+import { getElementAtPosition } from "@/lib/math";
 import { ToolType } from "@/lib/types";
 
 export function useCanvasLogic() {
-    const { elements, appState, addElement, updateElement, setSelection, addToHistory, setElements, setZoom, setScroll, setTool } = useStore();
+    const { elements, appState, addElement, updateElement, removeElement, setSelection, addToHistory, setElements, setZoom, setScroll, setTool } = useStore();
     const [cursor, setCursor] = useState("default");
     const [textInput, setTextInput] = useState<{ x: number; y: number; text: string; id: string } | null>(null);
     const [selectionRect, setSelectionRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
     const [isPanning, setIsPanning] = useState(false);
     const lastMousePos = useRef<{ x: number; y: number } | null>(null);
+    const spaceDown = useRef(false);
 
     const tools = useMemo(() => {
         return {
@@ -25,9 +28,48 @@ export function useCanvasLogic() {
             arrow: new ShapeTool("arrow"),
             pencil: new PencilTool(),
             text: new TextTool(),
+            eraser: new EraserTool(),
             hand: null, // Handled separately or as a fallback
         };
     }, []);
+
+    // Hold Space to temporarily pan (released → back to the active tool).
+    useEffect(() => {
+        const isEditing = (t: EventTarget | null) => {
+            const el = t as HTMLElement | null;
+            return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+        };
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.code === "Space" && !spaceDown.current && !isEditing(e.target)) {
+                e.preventDefault();
+                spaceDown.current = true;
+                setCursor("grab");
+            }
+        };
+        const onKeyUp = (e: KeyboardEvent) => {
+            if (e.code === "Space") {
+                spaceDown.current = false;
+                setCursor("default");
+            }
+        };
+        window.addEventListener("keydown", onKeyDown);
+        window.addEventListener("keyup", onKeyUp);
+        return () => {
+            window.removeEventListener("keydown", onKeyDown);
+            window.removeEventListener("keyup", onKeyUp);
+        };
+    }, []);
+
+    // Base cursor for the active tool (drawing tools show a crosshair).
+    useEffect(() => {
+        if (spaceDown.current) return;
+        const t = appState.tool;
+        if (t === "hand") setCursor("grab");
+        else if (t === "text") setCursor("text");
+        else if (t === "selection") setCursor("default");
+        else if (t === "eraser") setCursor("crosshair");
+        else setCursor("crosshair");
+    }, [appState.tool]);
 
     const getMouseCoordinates = (e: React.MouseEvent | React.TouchEvent) => {
         let clientX, clientY;
@@ -52,6 +94,7 @@ export function useCanvasLogic() {
         setElements,
         updateElement,
         addElement,
+        removeElement,
         setSelection,
         setTool,
         setCursor,
@@ -64,7 +107,7 @@ export function useCanvasLogic() {
         const { clientX, clientY } = e;
         const { x, y } = getMouseCoordinates(e);
 
-        if (isPanning || appState.tool === "hand") {
+        if (isPanning || spaceDown.current || appState.tool === "hand") {
             lastMousePos.current = { x: clientX, y: clientY };
             setCursor("grabbing");
             return;
@@ -85,7 +128,7 @@ export function useCanvasLogic() {
         const { clientX, clientY } = e;
         const { x, y } = getMouseCoordinates(e);
 
-        if (isPanning || appState.tool === "hand") {
+        if (isPanning || spaceDown.current || appState.tool === "hand") {
             if (lastMousePos.current && (e.buttons === 1)) {
                 const dx = clientX - lastMousePos.current.x;
                 const dy = clientY - lastMousePos.current.y;
@@ -105,9 +148,9 @@ export function useCanvasLogic() {
     const handleMouseUp = (e: React.MouseEvent) => {
         const { x, y } = getMouseCoordinates(e);
 
-        if (isPanning || appState.tool === "hand") {
+        if (isPanning || spaceDown.current || appState.tool === "hand") {
             lastMousePos.current = null;
-            setCursor("grab");
+            setCursor(spaceDown.current ? "grab" : appState.tool === "hand" ? "grab" : "default");
             return;
         }
 
@@ -115,6 +158,23 @@ export function useCanvasLogic() {
         if (tool) {
             tool.onMouseUp(e, { ...context, x, y });
         }
+    };
+
+    const handleDoubleClick = (e: React.MouseEvent) => {
+        if (appState.tool === "hand") return;
+        const { x, y } = getMouseCoordinates(e);
+
+        // Double-click an existing text element to edit it.
+        const hit = getElementAtPosition(x, y, elements);
+        if (hit && hit.type === "text") {
+            setSelection([]);
+            addToHistory(); // snapshot pre-edit text so the edit is undoable
+            setTextInput({ x: hit.x, y: hit.y, text: hit.text || "", id: hit.id });
+            return;
+        }
+
+        // Otherwise create a new text element at the cursor (Excalidraw-style).
+        tools.text?.onMouseDown(e, { ...context, x, y });
     };
 
     const isPinching = useRef(false);
@@ -265,6 +325,7 @@ export function useCanvasLogic() {
         handleMouseDown,
         handleMouseMove,
         handleMouseUp,
+        handleDoubleClick,
         handleTouchStart,
         handleTouchMove,
         handleTouchEnd,

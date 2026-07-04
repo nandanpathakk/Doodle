@@ -100,9 +100,14 @@ export function isPointInElement(x: number, y: number, element: Element): boolea
 
     switch (type) {
         case "rectangle":
-        case "text":
             return x >= x1 - hitThreshold && x <= x2 + hitThreshold &&
                 y >= y1 - hitThreshold && y <= y2 + hitThreshold;
+        case "text": {
+            // Text x/y is an anchor whose meaning depends on align/baseline.
+            const b = getElementBounds(element);
+            return x >= b.x - hitThreshold && x <= b.x + b.width + hitThreshold &&
+                y >= b.y - hitThreshold && y <= b.y + b.height + hitThreshold;
+        }
         case "circle":
             // Ellipse hit test with threshold
             // Broad phase first
@@ -113,6 +118,15 @@ export function isPointInElement(x: number, y: number, element: Element): boolea
             const a = (x2 - x1) / 2 + hitThreshold; // Inflate radius
             const b = (y2 - y1) / 2 + hitThreshold;
             return ((x - h) ** 2) / (a ** 2) + ((y - k) ** 2) / (b ** 2) <= 1;
+        case "diamond": {
+            // |x-cx|/rx + |y-cy|/ry <= 1 describes the rhombus spanning the bounds.
+            const cx = x1 + (x2 - x1) / 2;
+            const cy = y1 + (y2 - y1) / 2;
+            const rx = (x2 - x1) / 2 + hitThreshold;
+            const ry = (y2 - y1) / 2 + hitThreshold;
+            if (rx <= 0 || ry <= 0) return false;
+            return Math.abs(x - cx) / rx + Math.abs(y - cy) / ry <= 1;
+        }
         default:
             return false;
     }
@@ -177,6 +191,38 @@ export const getElementAtPosition = (x: number, y: number, elements: Element[]):
     return null;
 };
 
+/**
+ * Axis-aligned bounds of a single element. For point-based elements (pencil,
+ * line, arrow) this is derived from the points, since their width/height fields
+ * are not maintained.
+ */
+export const getElementBounds = (el: Element) => {
+    if (el.type === "text") {
+        // x/y is the text anchor: shift by align/baseline to get the visual box.
+        const w = Math.abs(el.width);
+        const h = Math.abs(el.height);
+        let x = el.x, y = el.y;
+        if (el.textAlign === "center") x -= w / 2;
+        else if (el.textAlign === "right") x -= w;
+        if (el.textBaseline === "middle") y -= h / 2;
+        else if (el.textBaseline === "bottom") y -= h;
+        return { x, y, width: w, height: h };
+    }
+    if (el.points && el.points.length > 0) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const p of el.points) {
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x);
+            maxY = Math.max(maxY, p.y);
+        }
+        return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+    }
+    const x = el.width < 0 ? el.x + el.width : el.x;
+    const y = el.height < 0 ? el.y + el.height : el.y;
+    return { x, y, width: Math.abs(el.width), height: Math.abs(el.height) };
+};
+
 export const getSelectionBounds = (elements: Element[]) => {
     let minX = Infinity;
     let minY = Infinity;
@@ -184,15 +230,11 @@ export const getSelectionBounds = (elements: Element[]) => {
     let maxY = -Infinity;
 
     elements.forEach((el) => {
-        const ex = el.width < 0 ? el.x + el.width : el.x;
-        const ey = el.height < 0 ? el.y + el.height : el.y;
-        const ew = Math.abs(el.width);
-        const eh = Math.abs(el.height);
-
-        minX = Math.min(minX, ex);
-        minY = Math.min(minY, ey);
-        maxX = Math.max(maxX, ex + ew);
-        maxY = Math.max(maxY, ey + eh);
+        const b = getElementBounds(el);
+        minX = Math.min(minX, b.x);
+        minY = Math.min(minY, b.y);
+        maxX = Math.max(maxX, b.x + b.width);
+        maxY = Math.max(maxY, b.y + b.height);
     });
 
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };

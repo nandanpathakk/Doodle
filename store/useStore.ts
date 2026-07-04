@@ -1,38 +1,85 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { AppState, Element, ToolType } from "@/lib/types";
+import { AppState, Element, ToolType, StrokeStyle, FillStyle, Edges } from "@/lib/types";
 import { nanoid } from "nanoid";
+import { getSelectionBounds } from "@/lib/math";
 
 interface History {
     past: Element[][];
     future: Element[][];
 }
 
+// Style applied to newly created elements (and the "last used" style).
+export interface CurrentStyle {
+    strokeColor: string;
+    backgroundColor: string;
+    strokeWidth: number;
+    roughness: number;
+    opacity: number;
+    strokeStyle: StrokeStyle;
+    fillStyle: FillStyle;
+    edges: Edges;
+    fontSize: number;
+}
+
+// Cap history so memory doesn't grow without bound during long sessions.
+const HISTORY_LIMIT = 100;
+
+// Module-level debounce timer for persisted writes (see storage.setItem below).
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
 interface Store {
     elements: Element[];
     appState: AppState;
     history: History;
     isDarkMode: boolean;
+    currentStyle: CurrentStyle;
 
     setTool: (tool: ToolType) => void;
     addElement: (element: Element) => void;
     updateElement: (id: string, updates: Partial<Element>) => void;
     removeElement: (id: string) => void;
+    removeElements: (ids: string[]) => void;
     setSelection: (ids: string[]) => void;
     setZoom: (zoom: number) => void;
     setScroll: (x: number, y: number) => void;
     setElements: (elements: Element[]) => void;
     clearElements: () => void;
     toggleDarkMode: () => void;
+    setCurrentStyle: (updates: Partial<CurrentStyle>) => void;
+
+    group: (ids: string[]) => void;
+    ungroup: (ids: string[]) => void;
+    moveSelection: (direction: "front" | "back" | "forward" | "backward") => void;
+
+    zoomIn: () => void;
+    zoomOut: () => void;
+    resetZoom: () => void;
+    zoomToFit: () => void;
 
     addToHistory: () => void;
     undo: () => void;
     redo: () => void;
 }
 
+const clampZoom = (z: number) => Math.max(0.1, Math.min(5, z));
+
+// Keep the world point at the viewport centre fixed while changing zoom.
+const zoomAroundCenter = (appState: AppState, newZoom: number): Partial<AppState> => {
+    const cx = (typeof window !== "undefined" ? window.innerWidth : 0) / 2;
+    const cy = (typeof window !== "undefined" ? window.innerHeight : 0) / 2;
+    const worldX = (cx - appState.scrollX) / appState.zoom;
+    const worldY = (cy - appState.scrollY) / appState.zoom;
+    return {
+        zoom: newZoom,
+        scrollX: cx - worldX * newZoom,
+        scrollY: cy - worldY * newZoom,
+    };
+};
+
 export const useStore = create<Store>()(
     persist(
-        (set, get) => ({
+        (set) => ({
             elements: [],
             appState: {
                 tool: "selection",
@@ -47,9 +94,23 @@ export const useStore = create<Store>()(
                 future: [],
             },
             isDarkMode: false,
+            currentStyle: {
+                strokeColor: "#000000",
+                backgroundColor: "transparent",
+                strokeWidth: 2,
+                roughness: 1,
+                opacity: 100,
+                strokeStyle: "solid",
+                fillStyle: "hachure",
+                edges: "sharp",
+                fontSize: 20,
+            },
 
             setTool: (tool) =>
                 set((state) => ({ appState: { ...state.appState, tool } })),
+
+            setCurrentStyle: (updates) =>
+                set((state) => ({ currentStyle: { ...state.currentStyle, ...updates } })),
 
             addElement: (element) =>
                 set((state) => ({ elements: [...state.elements, element] })),
@@ -69,8 +130,123 @@ export const useStore = create<Store>()(
                     elements: state.elements.filter((el) => el.id !== id),
                 })),
 
+            removeElements: (ids) =>
+                set((state) => {
+                    const idSet = new Set(ids);
+                    return { elements: state.elements.filter((el) => !idSet.has(el.id)) };
+                }),
+
             clearElements: () =>
                 set(() => ({ elements: [] })),
+
+            group: (ids) =>
+                set((state) => {
+                    if (ids.length < 2) return state;
+                    const groupId = nanoid();
+                    const idSet = new Set(ids);
+                    return {
+                        history: {
+                            past: [...state.history.past, state.elements].slice(-HISTORY_LIMIT),
+                            future: [],
+                        },
+                        elements: state.elements.map((el) =>
+                            idSet.has(el.id) ? { ...el, groupId } : el
+                        ),
+                    };
+                }),
+
+            ungroup: (ids) =>
+                set((state) => {
+                    const idSet = new Set(ids);
+                    const groupIds = new Set(
+                        state.elements
+                            .filter((el) => idSet.has(el.id) && el.groupId)
+                            .map((el) => el.groupId as string)
+                    );
+                    if (groupIds.size === 0) return state;
+                    return {
+                        history: {
+                            past: [...state.history.past, state.elements].slice(-HISTORY_LIMIT),
+                            future: [],
+                        },
+                        elements: state.elements.map((el) =>
+                            el.groupId && groupIds.has(el.groupId)
+                                ? { ...el, groupId: undefined }
+                                : el
+                        ),
+                    };
+                }),
+
+            moveSelection: (direction) =>
+                set((state) => {
+                    const sel = new Set(state.appState.selection);
+                    if (sel.size === 0) return state;
+                    const els = state.elements;
+                    let next: Element[];
+
+                    if (direction === "front") {
+                        next = [...els.filter((e) => !sel.has(e.id)), ...els.filter((e) => sel.has(e.id))];
+                    } else if (direction === "back") {
+                        next = [...els.filter((e) => sel.has(e.id)), ...els.filter((e) => !sel.has(e.id))];
+                    } else {
+                        // forward / backward: shift each selected element one step, keeping order stable.
+                        next = [...els];
+                        const order = direction === "forward"
+                            ? [...next.keys()].reverse() // process top-most first when moving up
+                            : [...next.keys()];
+                        for (const i of order) {
+                            if (!sel.has(next[i].id)) continue;
+                            const swapWith = direction === "forward" ? i + 1 : i - 1;
+                            if (swapWith < 0 || swapWith >= next.length) continue;
+                            if (sel.has(next[swapWith].id)) continue; // don't reorder within the selection
+                            [next[i], next[swapWith]] = [next[swapWith], next[i]];
+                        }
+                    }
+
+                    return {
+                        history: {
+                            past: [...state.history.past, state.elements].slice(-HISTORY_LIMIT),
+                            future: [],
+                        },
+                        elements: next,
+                    };
+                }),
+
+            zoomIn: () =>
+                set((state) => ({
+                    appState: { ...state.appState, ...zoomAroundCenter(state.appState, clampZoom(state.appState.zoom * 1.2)) },
+                })),
+
+            zoomOut: () =>
+                set((state) => ({
+                    appState: { ...state.appState, ...zoomAroundCenter(state.appState, clampZoom(state.appState.zoom / 1.2)) },
+                })),
+
+            resetZoom: () =>
+                set((state) => ({
+                    appState: { ...state.appState, ...zoomAroundCenter(state.appState, 1) },
+                })),
+
+            zoomToFit: () =>
+                set((state) => {
+                    if (state.elements.length === 0) return state;
+                    if (typeof window === "undefined") return state;
+                    const bounds = getSelectionBounds(state.elements);
+                    if (!isFinite(bounds.width) || !isFinite(bounds.height)) return state;
+                    const padding = 80;
+                    const vw = window.innerWidth;
+                    const vh = window.innerHeight;
+                    const zoom = clampZoom(
+                        Math.min(
+                            (vw - padding * 2) / Math.max(bounds.width, 1),
+                            (vh - padding * 2) / Math.max(bounds.height, 1),
+                            1
+                        )
+                    );
+                    const scrollX = vw / 2 - (bounds.x + bounds.width / 2) * zoom;
+                    const scrollY = vh / 2 - (bounds.y + bounds.height / 2) * zoom;
+                    return { appState: { ...state.appState, zoom, scrollX, scrollY } };
+                }),
 
             setSelection: (ids) =>
                 set((state) => ({ appState: { ...state.appState, selection: ids } })),
@@ -87,7 +263,7 @@ export const useStore = create<Store>()(
             addToHistory: () =>
                 set((state) => ({
                     history: {
-                        past: [...state.history.past, state.elements],
+                        past: [...state.history.past, state.elements].slice(-HISTORY_LIMIT),
                         future: [],
                     },
                 })),
@@ -124,7 +300,8 @@ export const useStore = create<Store>()(
             name: "doodle-storage",
             partialize: (state) => ({
                 elements: state.elements,
-                isDarkMode: state.isDarkMode
+                isDarkMode: state.isDarkMode,
+                currentStyle: state.currentStyle,
             }),
             storage: {
                 getItem: (name) => {
@@ -132,16 +309,11 @@ export const useStore = create<Store>()(
                     return str ? JSON.parse(str) : null;
                 },
                 setItem: (name, value) => {
-                    // We need a debounced setItem. 
-                    // Since this is a pure function, we need a way to store the timer.
-                    // We can use a closure outside, but cleaner to just do it here with a global or module-level var.
-                    // But wait, the `value` is the computed state.
-
-                    // Simple debounce implementation:
-                    clearTimeout((window as any)._doodle_save_timeout);
-                    (window as any)._doodle_save_timeout = setTimeout(() => {
+                    // Debounce writes so rapid edits (e.g. dragging) don't thrash localStorage.
+                    if (saveTimer) clearTimeout(saveTimer);
+                    saveTimer = setTimeout(() => {
                         localStorage.setItem(name, JSON.stringify(value));
-                    }, 1000); // Save 1 second after last change
+                    }, 1000); // Save 1 second after the last change
                 },
                 removeItem: (name) => localStorage.removeItem(name),
             },

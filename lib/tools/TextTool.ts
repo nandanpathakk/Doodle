@@ -2,6 +2,7 @@ import { Tool, ToolContext } from "./Tool";
 import { nanoid } from "nanoid";
 import { Element } from "@/lib/types";
 import { getElementAtPosition, isPointOnBorder } from "@/lib/math";
+import { useStore } from "@/store/useStore";
 
 export class TextTool implements Tool {
     onMouseDown(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
@@ -79,6 +80,7 @@ export class TextTool implements Tool {
         }
 
         const id = nanoid();
+        const style = useStore.getState().currentStyle;
         const newElement: Element = {
             id,
             type: "text",
@@ -86,11 +88,12 @@ export class TextTool implements Tool {
             y: textY,
             width: 0,
             height: 0,
-            strokeColor: "#000000",
+            strokeColor: style.strokeColor,
             backgroundColor: "transparent",
-            strokeWidth: 2,
-            roughness: 1,
-            opacity: 100,
+            strokeWidth: style.strokeWidth,
+            roughness: style.roughness,
+            opacity: style.opacity,
+            fontSize: style.fontSize,
             text: "",
             seed: Math.floor(Math.random() * 2 ** 31),
             textAlign,
@@ -103,12 +106,9 @@ export class TextTool implements Tool {
         addToHistory();
         addElement(newElement);
 
-        // Calculate screen coordinates for the text input
-        const { appState } = context; // We need appState to get zoom/scroll
-        const screenX = textX * appState.zoom + appState.scrollX;
-        const screenY = textY * appState.zoom + appState.scrollY;
-
-        setTextInput({ x: screenX, y: screenY, text: "", id });
+        // World coordinates: CanvasTextInput converts to screen space on render,
+        // so the editor stays anchored to the element while panning/zooming.
+        setTextInput({ x: textX, y: textY, text: "", id });
     }
 
     onMouseMove(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
