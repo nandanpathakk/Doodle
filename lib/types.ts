@@ -31,6 +31,8 @@ export interface Element {
     edges?: Edges;               // sharp / round corners (rectangles)
     fontSize?: number;           // For text
     index: string;    // Fractional index carrying z-order — see lib/order.ts
+    isDeleted?: boolean; // Tombstone: deleted elements are kept, not dropped
+    updatedAt: number;   // Last-modified time, for tombstone GC
     version: number; // Version for cache invalidation
 }
 

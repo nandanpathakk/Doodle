@@ -3,7 +3,7 @@ import { persist } from "zustand/middleware";
 import { AppState, Element, ToolType, StrokeStyle, FillStyle, Edges } from "@/lib/types";
 import { nanoid } from "nanoid";
 import { getSelectionBounds } from "@/lib/math";
-import { compareIndex, normalizeIndices, reindexToOrder } from "@/lib/order";
+import { compareIndex, gcTombstones, normalizeIndices, reindexToOrder, sortByIndex } from "@/lib/order";
 
 interface History {
     past: Element[][];
@@ -30,7 +30,16 @@ const HISTORY_LIMIT = 100;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
 interface Store {
+    /**
+     * Visible elements — tombstones excluded. This is what every consumer
+     * (renderer, tools, hit-testing, export) wants, so it keeps the plain name.
+     */
     elements: Element[];
+    /**
+     * Every element including tombstones. Only state that has to reconcile with
+     * other peers reads this: persistence, history, and later the sync layer.
+     */
+    allElements: Element[];
     appState: AppState;
     history: History;
     isDarkMode: boolean;
@@ -63,6 +72,25 @@ interface Store {
     redo: () => void;
 }
 
+/**
+ * Single place the two element lists are derived from one another. Every
+ * mutation returns this, so `elements` can never drift from `allElements`.
+ */
+const deriveElements = (all: Element[]) => ({
+    allElements: all,
+    elements: all.filter((el) => !el.isDeleted),
+});
+
+/** Mark elements deleted rather than dropping them — see lib/order.ts. */
+const tombstone = (all: Element[], ids: Set<string>) => {
+    const now = Date.now();
+    return all.map((el) =>
+        ids.has(el.id) && !el.isDeleted
+            ? { ...el, isDeleted: true, updatedAt: now, version: el.version + 1 }
+            : el
+    );
+};
+
 const clampZoom = (z: number) => Math.max(0.1, Math.min(5, z));
 
 // Keep the world point at the viewport centre fixed while changing zoom.
@@ -82,6 +110,7 @@ export const useStore = create<Store>()(
     persist(
         (set) => ({
             elements: [],
+            allElements: [],
             appState: {
                 tool: "selection",
                 selection: [],
@@ -117,38 +146,52 @@ export const useStore = create<Store>()(
             // New elements almost always land on top, so scan from the end.
             addElement: (element) =>
                 set((state) => {
-                    const next = [...state.elements];
+                    const next = [...state.allElements];
                     let i = next.length;
                     while (i > 0 && compareIndex(next[i - 1], element) > 0) i--;
                     next.splice(i, 0, element);
-                    return { elements: next };
+                    return deriveElements(next);
                 }),
 
             // Entry point for elements from outside (files, paste, collaborators),
             // so this is where the sorted-by-index invariant gets re-established.
+            // Callers pass visible elements; existing tombstones are carried over
+            // so a delete is never silently forgotten.
             setElements: (elements) =>
-                set(() => ({ elements: normalizeIndices(elements) })),
-
-            updateElement: (id, updates) =>
-                set((state) => ({
-                    elements: state.elements.map((el) =>
-                        el.id === id ? { ...el, ...updates, version: el.version + 1 } : el
-                    ),
-                })),
-
-            removeElement: (id) =>
-                set((state) => ({
-                    elements: state.elements.filter((el) => el.id !== id),
-                })),
-
-            removeElements: (ids) =>
                 set((state) => {
-                    const idSet = new Set(ids);
-                    return { elements: state.elements.filter((el) => !idSet.has(el.id)) };
+                    const now = Date.now();
+                    const incoming = new Set(elements.map((el) => el.id));
+                    // Opened files predate these fields, so stamp what's missing.
+                    const stamped = elements.map((el) =>
+                        el.updatedAt ? el : { ...el, updatedAt: now }
+                    );
+                    const keptTombstones = state.allElements.filter(
+                        (el) => el.isDeleted && !incoming.has(el.id)
+                    );
+                    return deriveElements(normalizeIndices([...stamped, ...keptTombstones]));
                 }),
 
+            updateElement: (id, updates) =>
+                set((state) =>
+                    deriveElements(
+                        state.allElements.map((el) =>
+                            el.id === id
+                                ? { ...el, ...updates, updatedAt: Date.now(), version: el.version + 1 }
+                                : el
+                        )
+                    )
+                ),
+
+            removeElement: (id) =>
+                set((state) => deriveElements(tombstone(state.allElements, new Set([id])))),
+
+            removeElements: (ids) =>
+                set((state) => deriveElements(tombstone(state.allElements, new Set(ids)))),
+
             clearElements: () =>
-                set(() => ({ elements: [] })),
+                set((state) =>
+                    deriveElements(tombstone(state.allElements, new Set(state.elements.map((el) => el.id))))
+                ),
 
             group: (ids) =>
                 set((state) => {
@@ -157,11 +200,13 @@ export const useStore = create<Store>()(
                     const idSet = new Set(ids);
                     return {
                         history: {
-                            past: [...state.history.past, state.elements].slice(-HISTORY_LIMIT),
+                            past: [...state.history.past, state.allElements].slice(-HISTORY_LIMIT),
                             future: [],
                         },
-                        elements: state.elements.map((el) =>
-                            idSet.has(el.id) ? { ...el, groupId } : el
+                        ...deriveElements(
+                            state.allElements.map((el) =>
+                                idSet.has(el.id) ? { ...el, groupId } : el
+                            )
                         ),
                     };
                 }),
@@ -177,13 +222,15 @@ export const useStore = create<Store>()(
                     if (groupIds.size === 0) return state;
                     return {
                         history: {
-                            past: [...state.history.past, state.elements].slice(-HISTORY_LIMIT),
+                            past: [...state.history.past, state.allElements].slice(-HISTORY_LIMIT),
                             future: [],
                         },
-                        elements: state.elements.map((el) =>
-                            el.groupId && groupIds.has(el.groupId)
-                                ? { ...el, groupId: undefined }
-                                : el
+                        ...deriveElements(
+                            state.allElements.map((el) =>
+                                el.groupId && groupIds.has(el.groupId)
+                                    ? { ...el, groupId: undefined }
+                                    : el
+                            )
                         ),
                     };
                 }),
@@ -214,13 +261,21 @@ export const useStore = create<Store>()(
                         }
                     }
 
+                    // Ordering runs over visible elements only, so "one step
+                    // forward" never gets absorbed by an invisible tombstone.
+                    // The re-keyed results are then merged back into the full list.
+                    const reordered = reindexToOrder(next, sel);
+                    const byId = new Map(reordered.map((el) => [el.id, el]));
+
                     return {
                         history: {
-                            past: [...state.history.past, state.elements].slice(-HISTORY_LIMIT),
+                            past: [...state.history.past, state.allElements].slice(-HISTORY_LIMIT),
                             future: [],
                         },
                         // Re-key only what moved; untouched elements keep their index.
-                        elements: reindexToOrder(next, sel),
+                        ...deriveElements(
+                            sortByIndex(state.allElements.map((el) => byId.get(el.id) ?? el))
+                        ),
                     };
                 }),
 
@@ -272,10 +327,12 @@ export const useStore = create<Store>()(
             toggleDarkMode: () =>
                 set((state) => ({ isDarkMode: !state.isDarkMode })),
 
+            // History snapshots the full list so undo restores tombstone state
+            // too — otherwise undoing a delete could not bring the element back.
             addToHistory: () =>
                 set((state) => ({
                     history: {
-                        past: [...state.history.past, state.elements].slice(-HISTORY_LIMIT),
+                        past: [...state.history.past, state.allElements].slice(-HISTORY_LIMIT),
                         future: [],
                     },
                 })),
@@ -286,10 +343,10 @@ export const useStore = create<Store>()(
                     const previous = state.history.past[state.history.past.length - 1];
                     const newPast = state.history.past.slice(0, -1);
                     return {
-                        elements: previous,
+                        ...deriveElements(previous),
                         history: {
                             past: newPast,
-                            future: [state.elements, ...state.history.future],
+                            future: [state.allElements, ...state.history.future],
                         },
                     };
                 }),
@@ -300,9 +357,9 @@ export const useStore = create<Store>()(
                     const next = state.history.future[0];
                     const newFuture = state.history.future.slice(1);
                     return {
-                        elements: next,
+                        ...deriveElements(next),
                         history: {
-                            past: [...state.history.past, state.elements],
+                            past: [...state.history.past, state.allElements],
                             future: newFuture,
                         },
                     };
@@ -322,11 +379,27 @@ export const useStore = create<Store>()(
                     elements: normalizeIndices(state.elements ?? []),
                 } as Store;
             },
+            // Persist the full list, tombstones included, so a delete survives a
+            // reload instead of the element reappearing from a peer's copy.
             partialize: (state) => ({
-                elements: state.elements,
+                elements: state.allElements,
                 isDarkMode: state.isDarkMode,
                 currentStyle: state.currentStyle,
             }),
+            // Rehydration is the one place both lists are built from scratch:
+            // expire stale tombstones, then re-establish the index invariant.
+            merge: (persisted, current) => {
+                const p = (persisted ?? {}) as Partial<Store>;
+                const now = Date.now();
+                const stored = (p.elements ?? []).map((el) =>
+                    el.updatedAt ? el : { ...el, updatedAt: now }
+                );
+                return {
+                    ...current,
+                    ...p,
+                    ...deriveElements(normalizeIndices(gcTombstones(stored, now))),
+                };
+            },
             storage: {
                 getItem: (name) => {
                     const str = localStorage.getItem(name);

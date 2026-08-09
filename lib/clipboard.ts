@@ -38,6 +38,9 @@ export const cloneElements = (
             y: el.y + dy,
             points: el.points ? el.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) : undefined,
             groupId,
+            // A copy is a new element: never inherit the source's tombstone.
+            isDeleted: false,
+            updatedAt: Date.now(),
             version: 1,
         };
     });

@@ -102,6 +102,7 @@ export class TextTool implements Tool {
             containerElementId,
             onContainerBorder,
             index: indexOnTop(elements),
+            updatedAt: Date.now(),
             version: 1,
         };
 

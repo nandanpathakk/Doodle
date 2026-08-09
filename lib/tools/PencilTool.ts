@@ -30,6 +30,7 @@ export class PencilTool implements Tool {
             points: [{ x, y }],
             seed: Math.floor(Math.random() * 2 ** 31),
             index: indexOnTop(useStore.getState().elements),
+            updatedAt: Date.now(),
             version: 1,
         };
 

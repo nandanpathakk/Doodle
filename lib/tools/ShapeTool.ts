@@ -39,6 +39,7 @@ export class ShapeTool implements Tool {
             points: (this.type === "line" || this.type === "arrow") ? [{ x, y }] : undefined,
             seed: Math.floor(Math.random() * 2 ** 31),
             index: indexOnTop(useStore.getState().elements),
+            updatedAt: Date.now(),
             version: 1,
         };
 

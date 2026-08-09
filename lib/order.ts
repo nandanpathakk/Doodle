@@ -66,6 +66,17 @@ export const normalizeIndices = (elements: Element[]): Element[] => {
     return elements.map((el, i) => ({ ...el, index: keys[i] }));
 };
 
+/** How long a tombstone is kept before it can be dropped for good. */
+export const TOMBSTONE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Drop tombstones old enough that no collaborator could still be holding an
+ * un-synced edit to them. Run when elements enter the store, not on every
+ * mutation — a tombstone has to outlive any peer that might resurrect it.
+ */
+export const gcTombstones = (elements: Element[], now = Date.now()): Element[] =>
+    elements.filter((el) => !el.isDeleted || now - (el.updatedAt ?? 0) < TOMBSTONE_TTL_MS);
+
 /**
  * Realise a target array order by re-keying only the elements that moved.
  * Unmoved elements keep their keys, and because they hold their original
