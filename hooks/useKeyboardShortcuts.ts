@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useStore } from "@/store/useStore";
-import { ToolType } from "@/lib/types";
+import type { ToolType } from "@/lib/types";
 import { copySelection, cutSelection, pasteClipboard, duplicateSelection, deleteSelection, selectAll } from "@/lib/actions";
 
 // Single-key tool shortcuts (Excalidraw-style), plus numeric aliases.

@@ -1,4 +1,4 @@
-import { Element } from "./types";
+import type { Element } from "./types";
 
 export function isPointInElement(x: number, y: number, element: Element): boolean {
     const { type, x: ex, y: ey, width, height } = element;

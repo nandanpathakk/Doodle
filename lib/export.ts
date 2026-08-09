@@ -1,4 +1,4 @@
-import { Element, AppState } from "./types";
+import type { Element, AppState } from "./types";
 import { getSelectionBounds } from "./math";
 import { renderScene } from "./render";
 

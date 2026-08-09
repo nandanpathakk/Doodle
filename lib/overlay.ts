@@ -1,4 +1,4 @@
-import { AppState } from "./types";
+import type { AppState } from "./types";
 
 /**
  * The overlay is a second canvas stacked above the scene, for things that change

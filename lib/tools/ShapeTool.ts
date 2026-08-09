@@ -1,6 +1,6 @@
 import { Tool, ToolContext } from "./Tool";
 import { nanoid } from "nanoid";
-import { Element, ToolType } from "@/lib/types";
+import type { Element, ToolType } from "@/lib/types";
 import { indexOnTop } from "@/lib/order";
 import { useStore } from "@/store/useStore";
 

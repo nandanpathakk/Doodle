@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { Element } from "./types";
+import type { Element } from "./types";
 
 // In-app clipboard. Kept in module scope so it survives re-renders but not reloads.
 let clipboard: Element[] = [];

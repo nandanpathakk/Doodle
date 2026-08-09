@@ -1,9 +1,9 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { AppState, Element, ToolType, StrokeStyle, FillStyle, Edges } from "@/lib/types";
+import type { AppState, Element, ToolType, StrokeStyle, FillStyle, Edges } from "@/lib/types";
 import { nanoid } from "nanoid";
 import { getSelectionBounds } from "@/lib/math";
-import { compareIndex, gcTombstones, normalizeIndices, reindexToOrder, sortByIndex } from "@/lib/order";
+import { compareIndex, normalizeIndices, reindexToOrder, sortByIndex } from "@/lib/order";
 
 interface History {
     past: Element[][];
@@ -35,6 +35,21 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined;
  */
 let gestureActive = false;
 
+const gestureEndListeners = new Set<() => void>();
+
+/** True while a continuous edit is in progress. */
+export const isGestureActive = () => gestureActive;
+
+/**
+ * Fires when a continuous edit finishes. The sync layer uses this to write one
+ * transaction per gesture instead of one per pointer event: a 400-point pencil
+ * stroke becomes a single document update rather than 400.
+ */
+export const onGestureEnd = (fn: () => void): (() => void) => {
+    gestureEndListeners.add(fn);
+    return () => { gestureEndListeners.delete(fn); };
+};
+
 interface Store {
     /**
      * Visible elements — tombstones excluded. This is what every consumer
@@ -50,7 +65,13 @@ interface Store {
     history: History;
     isDarkMode: boolean;
     currentStyle: CurrentStyle;
+    /**
+     * Whether the drawing has been restored from storage yet. IndexedDB is
+     * async, so this distinguishes "nothing drawn" from "not loaded yet".
+     */
+    isDocLoaded: boolean;
 
+    setDocLoaded: (loaded: boolean) => void;
     setTool: (tool: ToolType) => void;
     addElement: (element: Element) => void;
     updateElement: (id: string, updates: Partial<Element>) => void;
@@ -60,6 +81,13 @@ interface Store {
     setZoom: (zoom: number) => void;
     setScroll: (x: number, y: number) => void;
     setElements: (elements: Element[]) => void;
+    /**
+     * Replace the element set from the synced document, which is the authority
+     * on both content and order. Unlike setElements it does not re-index, carry
+     * tombstones forward, or touch history — the document already decided all
+     * three, and re-deciding here would fight it.
+     */
+    replaceAllElements: (elements: Element[]) => void;
     clearElements: () => void;
     toggleDarkMode: () => void;
     setCurrentStyle: (updates: Partial<CurrentStyle>) => void;
@@ -142,6 +170,7 @@ export const useStore = create<Store>()(
                 future: [],
             },
             isDarkMode: false,
+            isDocLoaded: false,
             currentStyle: {
                 strokeColor: "#000000",
                 backgroundColor: "transparent",
@@ -153,6 +182,8 @@ export const useStore = create<Store>()(
                 edges: "sharp",
                 fontSize: 20,
             },
+
+            setDocLoaded: (loaded) => set(() => ({ isDocLoaded: loaded })),
 
             setTool: (tool) =>
                 set((state) => ({ appState: { ...state.appState, tool } })),
@@ -199,6 +230,9 @@ export const useStore = create<Store>()(
                         )
                     )
                 ),
+
+            replaceAllElements: (elements) =>
+                set(() => deriveElements(sortByIndex(elements))),
 
             removeElement: (id) =>
                 set((state) => deriveElements(tombstone(state.allElements, new Set([id])))),
@@ -356,8 +390,12 @@ export const useStore = create<Store>()(
                 }));
             },
 
+            // Guarded so the pointer-release and pointer-press safety nets, which
+            // fire on every click, don't notify listeners when nothing was open.
             commitGesture: () => {
+                if (!gestureActive) return;
                 gestureActive = false;
+                gestureEndListeners.forEach((fn) => fn());
             },
 
             // History snapshots the full list so undo restores tombstone state
@@ -400,39 +438,15 @@ export const useStore = create<Store>()(
         }),
         {
             name: "doodle-storage",
-            // v1 introduced Element.index (z-order). Drawings saved before it
-            // have none, so rebuild keys from the stored array order.
-            version: 1,
-            migrate: (persisted, version) => {
-                const state = persisted as Partial<Store> | undefined;
-                if (!state) return state as unknown as Store;
-                if (version >= 1) return state as Store;
-                return {
-                    ...state,
-                    elements: normalizeIndices(state.elements ?? []),
-                } as Store;
-            },
-            // Persist the full list, tombstones included, so a delete survives a
-            // reload instead of the element reappearing from a peer's copy.
+            version: 2,
+            // v2 moved elements into the Yjs document (see lib/collab). Only
+            // local preferences persist here now; the drawing itself is restored
+            // from IndexedDB, and lib/collab/legacy.ts imports pre-v2 drawings.
+            migrate: (persisted) => persisted as Store,
             partialize: (state) => ({
-                elements: state.allElements,
                 isDarkMode: state.isDarkMode,
                 currentStyle: state.currentStyle,
             }),
-            // Rehydration is the one place both lists are built from scratch:
-            // expire stale tombstones, then re-establish the index invariant.
-            merge: (persisted, current) => {
-                const p = (persisted ?? {}) as Partial<Store>;
-                const now = Date.now();
-                const stored = (p.elements ?? []).map((el) =>
-                    el.updatedAt ? el : { ...el, updatedAt: now }
-                );
-                return {
-                    ...current,
-                    ...p,
-                    ...deriveElements(normalizeIndices(gcTombstones(stored, now))),
-                };
-            },
             storage: {
                 getItem: (name) => {
                     const str = localStorage.getItem(name);

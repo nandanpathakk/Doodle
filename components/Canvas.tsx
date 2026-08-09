@@ -19,6 +19,7 @@ export default function Canvas() {
     const elements = useStore((s) => s.elements);
     const appState = useStore((s) => s.appState);
     const isDarkMode = useStore((s) => s.isDarkMode);
+    const isDocLoaded = useStore((s) => s.isDocLoaded);
     const setSelection = useStore((s) => s.setSelection);
     const setZoom = useStore((s) => s.setZoom);
     const setScroll = useStore((s) => s.setScroll);
@@ -164,7 +165,7 @@ export default function Canvas() {
             {contextMenu && (
                 <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
             )}
-            {elements.length === 0 && <WelcomeScreen />}
+            {isDocLoaded && elements.length === 0 && <WelcomeScreen />}
             <ZoomIndicator />
         </>
     );

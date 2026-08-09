@@ -2,7 +2,7 @@
 
 import { useStore } from "@/store/useStore";
 import { MousePointer2, Square, Circle, Diamond, Minus, ArrowRight, Pencil, Type, Eraser, Undo2 as Undo, Redo2 as Redo, Hand, Trash2, FileX, Moon, Sun } from "lucide-react";
-import { ToolType } from "@/lib/types";
+import type { ToolType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import MainMenu from "@/components/MainMenu";

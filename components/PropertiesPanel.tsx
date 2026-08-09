@@ -5,7 +5,7 @@ import { useStore } from "@/store/useStore";
 import { cn } from "@/lib/utils";
 import { Paintbrush, MousePointer2 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
-import { Element, ToolType } from "@/lib/types";
+import type { Element, ToolType } from "@/lib/types";
 import { measureTextBlock } from "@/lib/text";
 
 const colors = [

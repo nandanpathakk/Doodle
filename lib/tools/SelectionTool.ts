@@ -2,7 +2,7 @@ import { Tool, ToolContext } from "./Tool";
 import { getElementAtPosition, getSelectionBounds, getElementBounds, getResizeHandleAtPosition, getCursorForHandle, getLineControlPoint } from "@/lib/math";
 import { cloneElements } from "@/lib/clipboard";
 import { appendOnTop } from "@/lib/order";
-import { Element, AppState } from "@/lib/types";
+import type { Element, AppState } from "@/lib/types";
 
 interface ResizeOriginal {
     x: number;

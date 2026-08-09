@@ -7,7 +7,7 @@ import { TextTool } from "@/lib/tools/TextTool";
 import { SelectionTool } from "@/lib/tools/SelectionTool";
 import { EraserTool } from "@/lib/tools/EraserTool";
 import { getElementAtPosition } from "@/lib/math";
-import { ToolType } from "@/lib/types";
+import type { ToolType } from "@/lib/types";
 
 // The cursor a tool shows when nothing more specific applies.
 const baseCursorForTool = (tool: ToolType): string => {

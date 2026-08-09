@@ -1,5 +1,5 @@
 import rough from "roughjs";
-import { Element, AppState } from "./types";
+import type { Element, AppState } from "./types";
 import { getStroke } from "perfect-freehand";
 import { getElementBounds } from "./math";
 import { getTextFont, getLineBaseline, TEXT_LINE_HEIGHT } from "./text";

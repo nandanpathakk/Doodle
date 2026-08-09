@@ -1,4 +1,4 @@
-import { AppState, Element, ToolType } from "@/lib/types";
+import type { AppState, Element, ToolType } from "@/lib/types";
 
 export interface Tool {
     onMouseDown: (e: React.MouseEvent | React.TouchEvent, context: ToolContext) => void;
