@@ -25,6 +25,9 @@ export const registerUndoHandler = (handler: UndoHandler): (() => void) => {
     };
 };
 
+/** Relay connection state, surfaced so the UI can show it honestly. */
+export type ConnectionStatus = "offline" | "connecting" | "connected";
+
 // Style applied to newly created elements (and the "last used" style).
 export interface CurrentStyle {
     strokeColor: string;
@@ -84,8 +87,17 @@ interface Store {
      * async, so this distinguishes "nothing drawn" from "not loaded yet".
      */
     isDocLoaded: boolean;
+    /**
+     * Room this session is in, or null for the private local canvas. The two are
+     * separate documents and are never merged.
+     */
+    roomId: string | null;
+    /** Relay connection state. Always "offline" outside a room. */
+    connection: ConnectionStatus;
 
     setDocLoaded: (loaded: boolean) => void;
+    setSession: (roomId: string | null, connection: ConnectionStatus) => void;
+    setConnection: (connection: ConnectionStatus) => void;
     setTool: (tool: ToolType) => void;
     addElement: (element: Element) => void;
     updateElement: (id: string, updates: Partial<Element>) => void;
@@ -184,6 +196,8 @@ export const useStore = create<Store>()(
             canRedo: false,
             isDarkMode: false,
             isDocLoaded: false,
+            roomId: null,
+            connection: "offline",
             currentStyle: {
                 strokeColor: "#000000",
                 backgroundColor: "transparent",
@@ -197,6 +211,9 @@ export const useStore = create<Store>()(
             },
 
             setDocLoaded: (loaded) => set(() => ({ isDocLoaded: loaded })),
+
+            setSession: (roomId, connection) => set(() => ({ roomId, connection })),
+            setConnection: (connection) => set(() => ({ connection })),
 
             setTool: (tool) =>
                 set((state) => ({ appState: { ...state.appState, tool } })),

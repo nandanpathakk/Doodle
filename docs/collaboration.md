@@ -55,6 +55,14 @@ Things that are load-bearing and not obvious from a casual read.
   (`doodle-room-<id>`) are separate. Starting a session copies the current
   drawing into a new room; joining someone's link must not push your canvas
   into theirs.
+- **Session ownership token** (`lib/collab/useCollab.ts`). React does not
+  guarantee the old session's cleanup runs before the new session's effect, so
+  teardown only resets shared state if it still owns it. Without this a
+  late-arriving cleanup clears the store — and, because the new session is
+  already bound, pushes that emptiness into the new document.
+- **The room seed is read without being consumed** (`lib/collab/session.ts`).
+  React invokes effects twice in development; a destructive read means the
+  discarded first pass eats the seed and the real one starts empty.
 
 ## Latency design
 
@@ -81,7 +89,7 @@ The point of the architecture, in one place.
 - [x] **1c** Per-user undo
 - [ ] **1d** `Y.Text` for element text — optional; only matters when two people
       edit the *same* text element at once. Today it is last-write-wins.
-- [ ] **2** Server + rooms
+- [x] **2** Server + rooms (relay, `/r/[roomId]`, start/join/leave)
 - [ ] **3** Presence (cursors, selections, draft strokes, follow)
 - [ ] **4** Smoothness (interpolation, coalescing, RDP, load test)
 - [ ] **5** Optional E2E encryption
