@@ -4,6 +4,7 @@ import Canvas from "@/components/Canvas";
 import Toolbar from "@/components/Toolbar";
 import PropertiesPanel from "@/components/PropertiesPanel";
 import SessionIndicator from "@/components/SessionIndicator";
+import PresenceBar from "@/components/PresenceBar";
 import { useStore } from "@/store/useStore";
 import { useCollab } from "@/lib/collab/useCollab";
 
@@ -21,6 +22,7 @@ export default function DoodleApp({ roomId = null }: { roomId?: string | null })
             <Toolbar />
             <PropertiesPanel />
             <Canvas />
+            <PresenceBar />
             <SessionIndicator />
         </main>
     );

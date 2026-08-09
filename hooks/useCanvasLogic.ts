@@ -7,6 +7,7 @@ import { TextTool } from "@/lib/tools/TextTool";
 import { SelectionTool } from "@/lib/tools/SelectionTool";
 import { EraserTool } from "@/lib/tools/EraserTool";
 import { getElementAtPosition } from "@/lib/math";
+import { publishCursor, publishSelection, publishTool } from "@/lib/collab/presence";
 import type { ToolType } from "@/lib/types";
 
 // The cursor a tool shows when nothing more specific applies.
@@ -108,6 +109,13 @@ export function useCanvasLogic() {
 
     const cursor = cursorOverride ?? baseCursorForTool(appState.tool);
 
+    // Tell the room what we have selected and which tool we are holding. Both
+    // change rarely, so they publish straight from the render pass; the pointer
+    // position is far too frequent for that and is published from the move
+    // handlers below, coalesced to one message per frame.
+    useEffect(() => { publishSelection(appState.selection); }, [appState.selection]);
+    useEffect(() => { publishTool(appState.tool); }, [appState.tool]);
+
     const getMouseCoordinates = (e: React.MouseEvent | React.TouchEvent) => {
         let clientX, clientY;
         if ('touches' in e) {
@@ -165,6 +173,7 @@ export function useCanvasLogic() {
     const handleMouseMove = (e: React.MouseEvent) => {
         const { clientX, clientY } = e;
         const { x, y } = getMouseCoordinates(e);
+        publishCursor({ x, y });
 
         if (isPanning || spaceDown.current || appState.tool === "hand") {
             if (lastMousePos.current && (e.buttons === 1)) {
@@ -200,6 +209,10 @@ export function useCanvasLogic() {
             tool.onMouseUp(e, { ...context, x, y });
         }
     };
+
+    // Withdraw our cursor when the pointer leaves the canvas, so peers do not
+    // see it frozen at the edge as though we were still there.
+    const handleMouseLeave = () => publishCursor(null);
 
     const handleDoubleClick = (e: React.MouseEvent) => {
         if (appState.tool === "hand") return;
@@ -268,6 +281,8 @@ export function useCanvasLogic() {
     };
 
     const handleTouchMove = (e: React.TouchEvent) => {
+        if (e.touches.length === 1) publishCursor(getMouseCoordinates(e));
+
         // Handle Pinch Zoom
         if (e.touches.length === 2 && isPinching.current && lastTouchDistance.current) {
             e.preventDefault();
@@ -365,6 +380,7 @@ export function useCanvasLogic() {
         handleMouseDown,
         handleMouseMove,
         handleMouseUp,
+        handleMouseLeave,
         handleDoubleClick,
         handleTouchStart,
         handleTouchMove,

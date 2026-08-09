@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { useStore } from "@/store/useStore";
 import { sizeCanvasToViewport } from "@/lib/render";
 import { drawOverlay, OverlayScene, Rect } from "@/lib/overlay";
+import { getRemotePeers, subscribeToRoster } from "@/lib/collab/presence";
 
 /**
  * Second canvas layer, stacked above the scene and transparent to input.
@@ -18,10 +19,11 @@ import { drawOverlay, OverlayScene, Rect } from "@/lib/overlay";
 export default function OverlayCanvas({ selectionRect }: { selectionRect: Rect | null }) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const appState = useStore((s) => s.appState);
+    const elements = useStore((s) => s.elements);
 
     // The loop reads the scene from a ref so that a change of props never has to
     // tear down and re-create the loop.
-    const sceneRef = useRef<OverlayScene>({ appState, selectionRect });
+    const sceneRef = useRef<Omit<OverlayScene, "peers">>({ appState, selectionRect, elements });
     const wakeRef = useRef<(() => void) | null>(null);
 
     useEffect(() => {
@@ -33,9 +35,13 @@ export default function OverlayCanvas({ selectionRect }: { selectionRect: Rect |
 
         const tick = () => {
             sizeCanvasToViewport(canvas);
+            // Peers are read straight from the presence module rather than
+            // arriving as props: at ~30Hz each they would otherwise re-render
+            // the app hundreds of times a second to move a few cursors.
+            const peers = [...getRemotePeers().values()];
             // A final pass still runs when the scene empties, so the last
             // content is cleared before the loop parks.
-            if (drawOverlay(canvas, sceneRef.current)) {
+            if (drawOverlay(canvas, { ...sceneRef.current, peers })) {
                 frame = requestAnimationFrame(tick);
             } else {
                 running = false;
@@ -66,9 +72,13 @@ export default function OverlayCanvas({ selectionRect }: { selectionRect: Rect |
     // effect rather than during render so the loop's state is never mutated
     // mid-render; the overlay is frame-driven anyway, so a frame's delay is free.
     useEffect(() => {
-        sceneRef.current = { appState, selectionRect };
+        sceneRef.current = { appState, selectionRect, elements };
         wakeRef.current?.();
     });
+
+    // Peers joining or leaving does not re-render this component, so the loop
+    // needs waking when the roster changes or a first cursor would never appear.
+    useEffect(() => subscribeToRoster(() => wakeRef.current?.()), []);
 
     return (
         <canvas

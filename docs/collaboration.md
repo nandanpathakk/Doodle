@@ -63,6 +63,13 @@ Things that are load-bearing and not obvious from a casual read.
 - **The room seed is read without being consumed** (`lib/collab/session.ts`).
   React invokes effects twice in development; a destructive read means the
   discarded first pass eats the seed and the real one starts empty.
+- **Presence publishes on a timer, not requestAnimationFrame**
+  (`lib/collab/presence.ts`). rAF does not run in a hidden tab, so switching
+  away mid-move strands the pending publish and peers keep seeing a cursor that
+  has gone. Timers still fire when hidden.
+- **Remote presence never enters React state.** At ~30Hz per peer it would
+  re-render the app hundreds of times a second; the overlay reads it directly
+  on its frame loop. Only the roster reaches React, via useSyncExternalStore.
 
 ## Latency design
 
@@ -75,7 +82,7 @@ The point of the architecture, in one place.
 2. **Overlay canvas** (`lib/overlay.ts`). Remote cursors at ~30Hz per peer must
    not repaint the drawing or re-run RoughJS.
 3. **Cursor interpolation.** Lerp between updates; 30Hz data on a 120Hz display
-   is the difference between smooth and steppy.
+   is the difference between smooth and steppy. *(done — lib/overlay.ts)*
 4. **Outbound coalescing.** One awareness publish per animation frame.
 5. **Stroke simplification.** RDP before commit; ~400 points to ~60.
 
@@ -90,7 +97,8 @@ The point of the architecture, in one place.
 - [ ] **1d** `Y.Text` for element text — optional; only matters when two people
       edit the *same* text element at once. Today it is last-write-wins.
 - [x] **2** Server + rooms (relay, `/r/[roomId]`, start/join/leave)
-- [ ] **3** Presence (cursors, selections, draft strokes, follow)
+- [x] **3a** Presence: remote cursors, peer selections, avatars, rename
+- [ ] **3b** In-flight gesture streaming (draft strokes) and viewport follow
 - [ ] **4** Smoothness (interpolation, coalescing, RDP, load test)
 - [ ] **5** Optional E2E encryption
 
