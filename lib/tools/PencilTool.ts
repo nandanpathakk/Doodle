@@ -1,6 +1,7 @@
 import { Tool, ToolContext } from "./Tool";
 import { nanoid } from "nanoid";
 import { Element } from "@/lib/types";
+import { indexOnTop } from "@/lib/order";
 import { useStore } from "@/store/useStore";
 
 export class PencilTool implements Tool {
@@ -28,6 +29,7 @@ export class PencilTool implements Tool {
             strokeStyle: style.strokeStyle,
             points: [{ x, y }],
             seed: Math.floor(Math.random() * 2 ** 31),
+            index: indexOnTop(useStore.getState().elements),
             version: 1,
         };
 

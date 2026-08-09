@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { AppState, Element, ToolType, StrokeStyle, FillStyle, Edges } from "@/lib/types";
 import { nanoid } from "nanoid";
 import { getSelectionBounds } from "@/lib/math";
+import { compareIndex, normalizeIndices, reindexToOrder } from "@/lib/order";
 
 interface History {
     past: Element[][];
@@ -112,11 +113,21 @@ export const useStore = create<Store>()(
             setCurrentStyle: (updates) =>
                 set((state) => ({ currentStyle: { ...state.currentStyle, ...updates } })),
 
+            // Insert at the position its index calls for, keeping the array sorted.
+            // New elements almost always land on top, so scan from the end.
             addElement: (element) =>
-                set((state) => ({ elements: [...state.elements, element] })),
+                set((state) => {
+                    const next = [...state.elements];
+                    let i = next.length;
+                    while (i > 0 && compareIndex(next[i - 1], element) > 0) i--;
+                    next.splice(i, 0, element);
+                    return { elements: next };
+                }),
 
+            // Entry point for elements from outside (files, paste, collaborators),
+            // so this is where the sorted-by-index invariant gets re-established.
             setElements: (elements) =>
-                set(() => ({ elements })),
+                set(() => ({ elements: normalizeIndices(elements) })),
 
             updateElement: (id, updates) =>
                 set((state) => ({
@@ -208,7 +219,8 @@ export const useStore = create<Store>()(
                             past: [...state.history.past, state.elements].slice(-HISTORY_LIMIT),
                             future: [],
                         },
-                        elements: next,
+                        // Re-key only what moved; untouched elements keep their index.
+                        elements: reindexToOrder(next, sel),
                     };
                 }),
 
@@ -298,6 +310,18 @@ export const useStore = create<Store>()(
         }),
         {
             name: "doodle-storage",
+            // v1 introduced Element.index (z-order). Drawings saved before it
+            // have none, so rebuild keys from the stored array order.
+            version: 1,
+            migrate: (persisted, version) => {
+                const state = persisted as Partial<Store> | undefined;
+                if (!state) return state as unknown as Store;
+                if (version >= 1) return state as Store;
+                return {
+                    ...state,
+                    elements: normalizeIndices(state.elements ?? []),
+                } as Store;
+            },
             partialize: (state) => ({
                 elements: state.elements,
                 isDarkMode: state.isDarkMode,

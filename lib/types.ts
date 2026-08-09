@@ -30,6 +30,7 @@ export interface Element {
     fillStyle?: FillStyle;       // hachure / solid / cross-hatch
     edges?: Edges;               // sharp / round corners (rectangles)
     fontSize?: number;           // For text
+    index: string;    // Fractional index carrying z-order — see lib/order.ts
     version: number; // Version for cache invalidation
 }
 

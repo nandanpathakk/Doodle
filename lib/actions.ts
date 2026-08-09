@@ -1,5 +1,6 @@
 import { useStore } from "@/store/useStore";
 import { setClipboard, pasteFromClipboard, hasClipboard, cloneElements } from "@/lib/clipboard";
+import { appendOnTop } from "@/lib/order";
 
 const PASTE_OFFSET = 20;
 
@@ -27,7 +28,7 @@ export const pasteClipboard = () => {
     const { elements, addToHistory, setElements, setSelection } = useStore.getState();
     const pasted = pasteFromClipboard(PASTE_OFFSET, PASTE_OFFSET);
     addToHistory();
-    setElements([...elements, ...pasted]);
+    setElements(appendOnTop(elements, pasted));
     setSelection(pasted.map((el) => el.id));
 };
 
@@ -37,7 +38,7 @@ export const duplicateSelection = () => {
     if (selected.length === 0) return;
     const dupes = cloneElements(selected, PASTE_OFFSET, PASTE_OFFSET);
     addToHistory();
-    setElements([...elements, ...dupes]);
+    setElements(appendOnTop(elements, dupes));
     setSelection(dupes.map((el) => el.id));
 };
 

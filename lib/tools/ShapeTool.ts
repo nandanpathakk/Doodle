@@ -1,6 +1,7 @@
 import { Tool, ToolContext } from "./Tool";
 import { nanoid } from "nanoid";
 import { Element, ToolType } from "@/lib/types";
+import { indexOnTop } from "@/lib/order";
 import { useStore } from "@/store/useStore";
 
 export class ShapeTool implements Tool {
@@ -37,6 +38,7 @@ export class ShapeTool implements Tool {
             edges: style.edges,
             points: (this.type === "line" || this.type === "arrow") ? [{ x, y }] : undefined,
             seed: Math.floor(Math.random() * 2 ** 31),
+            index: indexOnTop(useStore.getState().elements),
             version: 1,
         };
 

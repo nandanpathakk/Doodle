@@ -1,6 +1,7 @@
 import { Tool, ToolContext } from "./Tool";
 import { getElementAtPosition, getSelectionBounds, getElementBounds, getResizeHandleAtPosition, getCursorForHandle, getLineControlPoint } from "@/lib/math";
 import { cloneElements } from "@/lib/clipboard";
+import { appendOnTop } from "@/lib/order";
 import { Element, AppState } from "@/lib/types";
 
 interface ResizeOriginal {
@@ -99,7 +100,7 @@ export class SelectionTool implements Tool {
                 const originals = elements.filter((el: Element) => dragIds.includes(el.id));
                 const clones = cloneElements(originals, 0, 0);
                 addToHistory();
-                setElements([...elements, ...clones]);
+                setElements(appendOnTop(elements, clones));
                 setSelection(clones.map((c) => c.id));
                 this.isDragging = true;
                 this.hasSnapshot = true; // history already captured above
