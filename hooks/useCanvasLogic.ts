@@ -20,7 +20,7 @@ const baseCursorForTool = (tool: ToolType): string => {
 };
 
 export function useCanvasLogic() {
-    const { elements, appState, addElement, updateElement, removeElement, setSelection, addToHistory, beginGesture, commitGesture, setElements, setZoom, setScroll, setTool } = useStore();
+    const { elements, appState, addElement, updateElement, removeElement, setSelection, beginGesture, commitGesture, setElements, setZoom, setScroll, setTool } = useStore();
     // Cursor is the tool's base, unless something transient (hover over a resize
     // handle, panning, holding Space) overrides it. Deriving the base rather than
     // pushing it from an effect keeps the two from fighting over the same state.
@@ -137,7 +137,6 @@ export function useCanvasLogic() {
         setCursor,
         beginGesture,
         commitGesture,
-        addToHistory,
         setTextInput,
         setSelectionRect,
     };
@@ -210,7 +209,6 @@ export function useCanvasLogic() {
         const hit = getElementAtPosition(x, y, elements);
         if (hit && hit.type === "text") {
             setSelection([]);
-            addToHistory(); // snapshot pre-edit text so the edit is undoable
             setTextInput({ x: hit.x, y: hit.y, text: hit.text || "", id: hit.id });
             return;
         }

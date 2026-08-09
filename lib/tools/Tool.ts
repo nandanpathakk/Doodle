@@ -19,13 +19,12 @@ export interface ToolContext {
     setTool: (tool: ToolType) => void;
     setCursor: (cursor: string) => void;
     /**
-     * Open a continuous edit. Safe to call on every pointer move — it snapshots
-     * history only once per gesture. The gesture is closed centrally on pointer
-     * release, so tools never need to call commitGesture themselves.
+     * Open a continuous edit. Idempotent, so it is safe to call on every
+     * pointer move. The gesture is closed centrally on pointer release, so
+     * tools never need to call commitGesture themselves.
      */
     beginGesture: () => void;
     commitGesture: () => void;
-    addToHistory: () => void;
     setTextInput: (input: { x: number; y: number; text: string; id: string } | null) => void;
     setSelectionRect: (rect: { x: number; y: number; width: number; height: number } | null) => void;
 }

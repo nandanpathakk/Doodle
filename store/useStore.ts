@@ -5,10 +5,25 @@ import { nanoid } from "nanoid";
 import { getSelectionBounds } from "@/lib/math";
 import { compareIndex, normalizeIndices, reindexToOrder, sortByIndex } from "@/lib/order";
 
-interface History {
-    past: Element[][];
-    future: Element[][];
+/**
+ * Undo is implemented over the synced document (see lib/collab/undo.ts) rather
+ * than in the store, because it has to be per-user: reverting a whole scene
+ * snapshot would take collaborators' work with it. The store keeps the actions
+ * so callers don't need to know, and delegates.
+ */
+export interface UndoHandler {
+    undo: () => void;
+    redo: () => void;
 }
+
+let undoHandler: UndoHandler | null = null;
+
+export const registerUndoHandler = (handler: UndoHandler): (() => void) => {
+    undoHandler = handler;
+    return () => {
+        if (undoHandler === handler) undoHandler = null;
+    };
+};
 
 // Style applied to newly created elements (and the "last used" style).
 export interface CurrentStyle {
@@ -22,9 +37,6 @@ export interface CurrentStyle {
     edges: Edges;
     fontSize: number;
 }
-
-// Cap history so memory doesn't grow without bound during long sessions.
-const HISTORY_LIMIT = 100;
 
 // Module-level debounce timer for persisted writes (see storage.setItem below).
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -62,7 +74,9 @@ interface Store {
      */
     allElements: Element[];
     appState: AppState;
-    history: History;
+    /** Whether the document's undo stack has anything for *this* user. */
+    canUndo: boolean;
+    canRedo: boolean;
     isDarkMode: boolean;
     currentStyle: CurrentStyle;
     /**
@@ -103,17 +117,18 @@ interface Store {
 
     /**
      * Bracket a continuous edit — a drag, a draw, a resize, a slider sweep.
-     * beginGesture() snapshots history at most once however many times it is
-     * called, so tools can call it on every pointer move without checking.
-     * commitGesture() closes it; the sync layer will use that edge to flush one
-     * transaction per gesture rather than one per pointer event.
+     * beginGesture() is idempotent, so tools can call it on every pointer move
+     * without checking. commitGesture() closes it, and the sync layer writes the
+     * whole gesture as one document transaction: one undo step, and one update
+     * for peers, however many pointer events it took.
      *
-     * One-shot edits (delete, paste, group) call addToHistory() directly.
+     * One-shot edits (delete, paste, group) need no bracketing — each is already
+     * a single store change, so it becomes a single transaction.
      */
     beginGesture: () => void;
     commitGesture: () => void;
 
-    addToHistory: () => void;
+    setUndoState: (canUndo: boolean, canRedo: boolean) => void;
     undo: () => void;
     redo: () => void;
 }
@@ -165,10 +180,8 @@ export const useStore = create<Store>()(
                 scrollX: 0,
                 scrollY: 0,
             },
-            history: {
-                past: [],
-                future: [],
-            },
+            canUndo: false,
+            canRedo: false,
             isDarkMode: false,
             isDocLoaded: false,
             currentStyle: {
@@ -251,10 +264,6 @@ export const useStore = create<Store>()(
                     const groupId = nanoid();
                     const idSet = new Set(ids);
                     return {
-                        history: {
-                            past: [...state.history.past, state.allElements].slice(-HISTORY_LIMIT),
-                            future: [],
-                        },
                         ...deriveElements(
                             state.allElements.map((el) =>
                                 idSet.has(el.id) ? { ...el, groupId } : el
@@ -273,10 +282,6 @@ export const useStore = create<Store>()(
                     );
                     if (groupIds.size === 0) return state;
                     return {
-                        history: {
-                            past: [...state.history.past, state.allElements].slice(-HISTORY_LIMIT),
-                            future: [],
-                        },
                         ...deriveElements(
                             state.allElements.map((el) =>
                                 el.groupId && groupIds.has(el.groupId)
@@ -320,10 +325,6 @@ export const useStore = create<Store>()(
                     const byId = new Map(reordered.map((el) => [el.id, el]));
 
                     return {
-                        history: {
-                            past: [...state.history.past, state.allElements].slice(-HISTORY_LIMIT),
-                            future: [],
-                        },
                         // Re-key only what moved; untouched elements keep their index.
                         ...deriveElements(
                             sortByIndex(state.allElements.map((el) => byId.get(el.id) ?? el))
@@ -380,14 +381,7 @@ export const useStore = create<Store>()(
                 set((state) => ({ isDarkMode: !state.isDarkMode })),
 
             beginGesture: () => {
-                if (gestureActive) return;
                 gestureActive = true;
-                set((state) => ({
-                    history: {
-                        past: [...state.history.past, state.allElements].slice(-HISTORY_LIMIT),
-                        future: [],
-                    },
-                }));
             },
 
             // Guarded so the pointer-release and pointer-press safety nets, which
@@ -398,43 +392,12 @@ export const useStore = create<Store>()(
                 gestureEndListeners.forEach((fn) => fn());
             },
 
-            // History snapshots the full list so undo restores tombstone state
-            // too — otherwise undoing a delete could not bring the element back.
-            addToHistory: () =>
-                set((state) => ({
-                    history: {
-                        past: [...state.history.past, state.allElements].slice(-HISTORY_LIMIT),
-                        future: [],
-                    },
-                })),
+            setUndoState: (canUndo, canRedo) => set(() => ({ canUndo, canRedo })),
 
-            undo: () =>
-                set((state) => {
-                    if (state.history.past.length === 0) return state;
-                    const previous = state.history.past[state.history.past.length - 1];
-                    const newPast = state.history.past.slice(0, -1);
-                    return {
-                        ...deriveElements(previous),
-                        history: {
-                            past: newPast,
-                            future: [state.allElements, ...state.history.future],
-                        },
-                    };
-                }),
-
-            redo: () =>
-                set((state) => {
-                    if (state.history.future.length === 0) return state;
-                    const next = state.history.future[0];
-                    const newFuture = state.history.future.slice(1);
-                    return {
-                        ...deriveElements(next),
-                        history: {
-                            past: [...state.history.past, state.allElements],
-                            future: newFuture,
-                        },
-                    };
-                }),
+            // Delegated to the document's undo manager, which tracks only this
+            // user's edits — see lib/collab/undo.ts.
+            undo: () => undoHandler?.undo(),
+            redo: () => undoHandler?.redo(),
         }),
         {
             name: "doodle-storage",

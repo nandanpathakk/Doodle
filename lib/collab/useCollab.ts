@@ -5,6 +5,7 @@ import * as Y from "yjs";
 import { IndexeddbPersistence } from "y-indexeddb";
 import { useStore } from "@/store/useStore";
 import { bindStoreToDoc } from "./binding";
+import { createUndoManager } from "./undo";
 import { getElementsMap, gcDocTombstones, LOCAL_ORIGIN } from "./doc";
 import { readLegacyElements, markLegacyImported } from "./legacy";
 
@@ -33,6 +34,15 @@ export function useCollab(): void {
 
         let cancelled = false;
         let unbind: (() => void) | undefined;
+        let disposeUndo: (() => void) | undefined;
+
+        // Order matters: bind first so the initial seed happens, then create the
+        // undo manager, so restoring a drawing is not itself an undoable step.
+        const start = () => {
+            unbind = bindStoreToDoc(doc);
+            disposeUndo = createUndoManager(doc);
+            setDocLoaded(true);
+        };
 
         persistence.whenSynced
             .then(() => {
@@ -51,20 +61,19 @@ export function useCollab(): void {
                 // sees them and the sweep is a single transaction.
                 doc.transact(() => gcDocTombstones(getElementsMap(doc)), LOCAL_ORIGIN);
 
-                unbind = bindStoreToDoc(doc);
-                setDocLoaded(true);
+                start();
             })
             .catch(() => {
                 // Storage unavailable (private mode, quota). Run in memory
                 // rather than leaving the canvas permanently blank.
                 if (cancelled) return;
                 if (legacy.length > 0) useStore.getState().replaceAllElements(legacy);
-                unbind = bindStoreToDoc(doc);
-                setDocLoaded(true);
+                start();
             });
 
         return () => {
             cancelled = true;
+            disposeUndo?.();
             unbind?.();
             persistence.destroy();
             doc.destroy();

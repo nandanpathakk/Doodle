@@ -12,15 +12,14 @@ export default function Toolbar() {
     // Granular selectors so the toolbar doesn't re-render while elements are being dragged.
     const activeTool = useStore((s) => s.appState.tool);
     const selectionCount = useStore((s) => s.appState.selection.length);
-    const pastLen = useStore((s) => s.history.past.length);
-    const futureLen = useStore((s) => s.history.future.length);
+    const canUndo = useStore((s) => s.canUndo);
+    const canRedo = useStore((s) => s.canRedo);
     const isDarkMode = useStore((s) => s.isDarkMode);
     const setTool = useStore((s) => s.setTool);
     const undo = useStore((s) => s.undo);
     const redo = useStore((s) => s.redo);
     const clearElements = useStore((s) => s.clearElements);
     const setSelection = useStore((s) => s.setSelection);
-    const addToHistory = useStore((s) => s.addToHistory);
     const toggleDarkMode = useStore((s) => s.toggleDarkMode);
 
     const tools: { id: ToolType; icon: React.ReactNode; label: string }[] = [
@@ -42,7 +41,6 @@ export default function Toolbar() {
 
     const handleClear = () => {
         if (confirm("Are you sure you want to clear all elements?")) {
-            addToHistory(); // make "Clear all" undoable
             clearElements();
             setSelection([]);
         }
@@ -80,7 +78,7 @@ export default function Toolbar() {
                     variant="ghost"
                     size="icon"
                     onClick={undo}
-                    disabled={pastLen === 0}
+                    disabled={!canUndo}
                     className="rounded-lg text-zinc-500 dark:text-zinc-400 disabled:opacity-30 md:hidden"
                     title="Undo"
                     aria-label="Undo"
@@ -91,7 +89,7 @@ export default function Toolbar() {
                     variant="ghost"
                     size="icon"
                     onClick={redo}
-                    disabled={futureLen === 0}
+                    disabled={!canRedo}
                     className="rounded-lg text-zinc-500 dark:text-zinc-400 disabled:opacity-30 md:hidden"
                     title="Redo"
                     aria-label="Redo"
@@ -125,8 +123,8 @@ export default function Toolbar() {
 
             {/* Desktop Actions (Undo/Redo - Top Right) */}
             <div className="hidden md:flex fixed top-4 right-4 z-10 gap-2 bg-white dark:bg-[#232329] p-1.5 rounded-xl shadow-sm border border-gray-200 dark:border-gray-800">
-                <Button variant="ghost" size="icon" onClick={undo} disabled={pastLen === 0} aria-label="Undo" className="rounded-lg text-zinc-700 dark:text-zinc-200"><Undo size={20} /></Button>
-                <Button variant="ghost" size="icon" onClick={redo} disabled={futureLen === 0} aria-label="Redo" className="rounded-lg text-zinc-700 dark:text-zinc-200"><Redo size={20} /></Button>
+                <Button variant="ghost" size="icon" onClick={undo} disabled={!canUndo} aria-label="Undo" className="rounded-lg text-zinc-700 dark:text-zinc-200"><Undo size={20} /></Button>
+                <Button variant="ghost" size="icon" onClick={redo} disabled={!canRedo} aria-label="Redo" className="rounded-lg text-zinc-700 dark:text-zinc-200"><Redo size={20} /></Button>
             </div>
 
             {/* Delete Button (Mobile: Bottom Right, Ghost) */}
