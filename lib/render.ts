@@ -24,11 +24,32 @@ const shapeCache = new Map<string, {
     text?: string;
 }>();
 
+/**
+ * Size a full-viewport canvas's backing store to the device pixel ratio so
+ * drawing stays crisp on HiDPI displays. Shared by the scene and overlay layers
+ * so their coordinate spaces stay identical.
+ */
+export const sizeCanvasToViewport = (canvas: HTMLCanvasElement) => {
+    const dpr = window.devicePixelRatio || 1;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const targetW = Math.floor(w * dpr);
+    const targetH = Math.floor(h * dpr);
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+        canvas.style.width = `${w}px`;
+        canvas.style.height = `${h}px`;
+    }
+};
+
+// Draws the committed drawing and the local selection UI. Transient overlays
+// (the drag-select marquee, and later remote cursors) live on the overlay
+// canvas — see lib/overlay.ts.
 export const renderScene = (
     canvas: HTMLCanvasElement,
     elements: Element[],
     appState: AppState,
-    selectionRect: { x: number; y: number; width: number; height: number } | null | undefined, // Relaxed type
     isDarkMode: boolean,
     editingId: string | null = null,
     renderOptions?: { dpr?: number; background?: string }
@@ -347,17 +368,6 @@ export const renderScene = (
                 ctx.restore();
             }
         }
-    }
-
-    // Draw temporary selection rect (drag to select)
-    if (selectionRect) {
-        ctx.save();
-        ctx.strokeStyle = "#3b82f6";
-        ctx.fillStyle = "rgba(59, 130, 246, 0.1)";
-        ctx.lineWidth = 1 / zoom;
-        ctx.fillRect(selectionRect.x, selectionRect.y, selectionRect.width, selectionRect.height);
-        ctx.strokeRect(selectionRect.x, selectionRect.y, selectionRect.width, selectionRect.height);
-        ctx.restore();
     }
 
     ctx.restore();

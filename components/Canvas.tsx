@@ -2,8 +2,9 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStore } from "@/store/useStore";
-import { renderScene } from "@/lib/render";
+import { renderScene, sizeCanvasToViewport } from "@/lib/render";
 import { useCanvasLogic } from "@/hooks/useCanvasLogic";
+import OverlayCanvas from "./OverlayCanvas";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { getElementAtPosition } from "@/lib/math";
 import CanvasTextInput from "./CanvasTextInput";
@@ -48,47 +49,34 @@ export default function Canvas() {
         fonts.ready.then(() => setFontsReady(true));
     }, []);
 
-    // Size the canvas backing store to the device pixel ratio so drawings stay crisp on HiDPI/Retina displays.
-    const sizeCanvas = (canvas: HTMLCanvasElement) => {
-        const dpr = window.devicePixelRatio || 1;
-        const w = window.innerWidth;
-        const h = window.innerHeight;
-        const targetW = Math.floor(w * dpr);
-        const targetH = Math.floor(h * dpr);
-        if (canvas.width !== targetW || canvas.height !== targetH) {
-            canvas.width = targetW;
-            canvas.height = targetH;
-            canvas.style.width = `${w}px`;
-            canvas.style.height = `${h}px`;
-        }
-    };
-
     // Coalesce draws to one per animation frame, so a burst of store updates
     // (e.g. dragging many elements) results in a single vsync-aligned render.
+    // Note `selectionRect` is absent from the dependencies: the marquee lives on
+    // the overlay canvas, so dragging one no longer repaints the whole scene.
     useLayoutEffect(() => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
         frameRef.current = requestAnimationFrame(() => {
-            sizeCanvas(canvas);
-            renderScene(canvas, elements, appState, selectionRect, isDarkMode, textInput?.id);
+            sizeCanvasToViewport(canvas);
+            renderScene(canvas, elements, appState, isDarkMode, textInput?.id);
         });
         return () => {
             if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
         };
-    }, [elements, appState, selectionRect, isDarkMode, textInput, fontsReady]);
+    }, [elements, appState, isDarkMode, textInput, fontsReady]);
 
     useEffect(() => {
         const handleResize = () => {
             const canvas = canvasRef.current;
             if (canvas) {
-                sizeCanvas(canvas);
-                renderScene(canvas, elements, appState, selectionRect, isDarkMode, textInput?.id);
+                sizeCanvasToViewport(canvas);
+                renderScene(canvas, elements, appState, isDarkMode, textInput?.id);
             }
         };
         window.addEventListener("resize", handleResize);
         return () => window.removeEventListener("resize", handleResize);
-    }, [elements, appState, selectionRect, isDarkMode, textInput]);
+    }, [elements, appState, isDarkMode, textInput]);
 
     // Add non-passive wheel listener to prevent browser zoom
     useEffect(() => {
@@ -169,6 +157,7 @@ export default function Canvas() {
             >
                 Canvas not supported
             </canvas>
+            <OverlayCanvas selectionRect={selectionRect} />
             {textInput && (
                 <CanvasTextInput textInput={textInput} setTextInput={setTextInput} />
             )}
