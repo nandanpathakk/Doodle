@@ -20,7 +20,7 @@ const baseCursorForTool = (tool: ToolType): string => {
 };
 
 export function useCanvasLogic() {
-    const { elements, appState, addElement, updateElement, removeElement, setSelection, addToHistory, setElements, setZoom, setScroll, setTool } = useStore();
+    const { elements, appState, addElement, updateElement, removeElement, setSelection, addToHistory, beginGesture, commitGesture, setElements, setZoom, setScroll, setTool } = useStore();
     // Cursor is the tool's base, unless something transient (hover over a resize
     // handle, panning, holding Space) overrides it. Deriving the base rather than
     // pushing it from an effect keeps the two from fighting over the same state.
@@ -76,6 +76,26 @@ export function useCanvasLogic() {
         };
     }, []);
 
+    // A gesture is bounded by a single pointer press, enforced from both ends.
+    //
+    // On release: window handlers run after React's, so a tool's own onMouseUp is
+    // still inside the gesture, and a release outside the canvas still closes it.
+    //
+    // On press (capture phase, before any React handler): close anything left
+    // open. Some edits open a gesture from a handler that fires *after* release —
+    // onClick on a colour swatch, dblclick creating a text element — and without
+    // this the stale gesture would swallow the next edit's history snapshot.
+    useEffect(() => {
+        const end = () => commitGesture();
+        const onRelease = ["mouseup", "touchend", "touchcancel", "pointercancel", "blur"];
+        onRelease.forEach((ev) => window.addEventListener(ev, end));
+        window.addEventListener("pointerdown", end, true);
+        return () => {
+            onRelease.forEach((ev) => window.removeEventListener(ev, end));
+            window.removeEventListener("pointerdown", end, true);
+        };
+    }, [commitGesture]);
+
     // Switching tools drops whatever cursor the previous tool set for itself.
     // Adjusting state during render (React's documented pattern) rather than in
     // an effect avoids a second paint showing the stale cursor. If Space is held
@@ -115,6 +135,8 @@ export function useCanvasLogic() {
         setSelection,
         setTool,
         setCursor,
+        beginGesture,
+        commitGesture,
         addToHistory,
         setTextInput,
         setSelectionRect,

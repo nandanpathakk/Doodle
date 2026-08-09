@@ -22,7 +22,6 @@ export class SelectionTool implements Tool {
     private selectionRect: { x: number; y: number; width: number; height: number } | null = null;
     private resizeHandle: string | null = null;
     private lineControlPoint: "start" | "middle" | "end" | null = null;
-    private hasSnapshot = false;
 
     // Resize gesture state (captured on mouse down)
     private resizeStartBounds: { x: number; y: number; width: number; height: number } | null = null;
@@ -35,11 +34,10 @@ export class SelectionTool implements Tool {
     // Let's assume we add setSelectionRect to context.
 
     onMouseDown(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
-        const { x, y, elements, appState, setSelection, setElements, addToHistory, setSelectionRect: setContextSelectionRect } = context;
+        const { x, y, elements, appState, setSelection, setElements, beginGesture, setSelectionRect: setContextSelectionRect } = context;
         // Note: We need to update ToolContext to include setSelectionRect
 
         this.lastMousePos = { x, y };
-        this.hasSnapshot = false;
 
         // 1. Check for line/arrow control points
         if (appState.selection.length === 1) {
@@ -49,7 +47,7 @@ export class SelectionTool implements Tool {
                 if (controlPoint) {
                     this.lineControlPoint = controlPoint;
                     this.isDraggingControlPoint = true;
-                    addToHistory();
+                    beginGesture();
                     return;
                 }
             }
@@ -80,7 +78,7 @@ export class SelectionTool implements Tool {
                             },
                         ])
                     );
-                    addToHistory();
+                    beginGesture();
                     return;
                 }
             }
@@ -99,11 +97,10 @@ export class SelectionTool implements Tool {
                 const dragIds = appState.selection.includes(element.id) ? appState.selection : idsToSelect;
                 const originals = elements.filter((el: Element) => dragIds.includes(el.id));
                 const clones = cloneElements(originals, 0, 0);
-                addToHistory();
+                beginGesture();
                 setElements(appendOnTop(elements, clones));
                 setSelection(clones.map((c) => c.id));
                 this.isDragging = true;
-                this.hasSnapshot = true; // history already captured above
                 this.lastMousePos = { x, y };
                 return;
             }
@@ -127,7 +124,7 @@ export class SelectionTool implements Tool {
     }
 
     onMouseMove(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
-        const { x, y, elements, appState, updateElement, setCursor, addToHistory, setSelectionRect: setContextSelectionRect } = context;
+        const { x, y, elements, appState, updateElement, setCursor, beginGesture, setSelectionRect: setContextSelectionRect } = context;
 
         // Cursor logic
         this.updateCursor(x, y, elements, appState, setCursor);
@@ -202,10 +199,7 @@ export class SelectionTool implements Tool {
                 updateElement(id, updates);
             });
         } else if (this.isDragging) {
-            if (!this.hasSnapshot) {
-                addToHistory();
-                this.hasSnapshot = true;
-            }
+            beginGesture();
             appState.selection.forEach((id: string) => {
                 const el = elements.find((e: Element) => e.id === id);
                 if (el) {

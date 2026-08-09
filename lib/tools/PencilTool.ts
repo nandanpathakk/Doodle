@@ -8,10 +8,10 @@ export class PencilTool implements Tool {
     private currentId: string | null = null;
 
     onMouseDown(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
-        const { x, y, addElement, addToHistory } = context;
+        const { x, y, addElement, beginGesture } = context;
 
         this.currentId = nanoid();
-        addToHistory();
+        beginGesture();
 
         const style = useStore.getState().currentStyle;
         const newElement: Element = {

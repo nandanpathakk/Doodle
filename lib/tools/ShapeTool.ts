@@ -12,13 +12,13 @@ export class ShapeTool implements Tool {
     constructor(private type: ToolType) { }
 
     onMouseDown(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
-        const { x, y, addElement, addToHistory } = context;
+        const { x, y, addElement, beginGesture } = context;
 
         this.startX = x;
         this.startY = y;
         this.currentId = nanoid();
 
-        addToHistory();
+        beginGesture();
 
         const style = useStore.getState().currentStyle;
         const newElement: Element = {

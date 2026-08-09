@@ -264,7 +264,7 @@ function BackgroundSection({
 }
 
 export default function PropertiesPanel() {
-    const { elements, appState, updateElement, isDarkMode, currentStyle, setCurrentStyle, addToHistory } = useStore();
+    const { elements, appState, updateElement, isDarkMode, currentStyle, setCurrentStyle, beginGesture } = useStore();
 
     const [activeMobilePanel, setActiveMobilePanel] = useState<"stroke" | "background" | null>(null);
     const [isMobile, setIsMobile] = useState(false);
@@ -305,9 +305,10 @@ export default function PropertiesPanel() {
 
     if (!element) return null;
 
-    // Snapshot history once at the start of an edit gesture (so a slider drag is one undo step).
+    // Open a gesture at the start of an edit, so a slider sweep is one undo step.
+    // It is closed centrally on pointer release (see useCanvasLogic).
     const handleBegin = () => {
-        if (hasSelection) addToHistory();
+        if (hasSelection) beginGesture();
     };
 
     const handleChange = (key: string, value: unknown) => {

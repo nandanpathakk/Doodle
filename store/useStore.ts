@@ -29,6 +29,12 @@ const HISTORY_LIMIT = 100;
 // Module-level debounce timer for persisted writes (see storage.setItem below).
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
+/**
+ * True between beginGesture() and commitGesture(). Transient input state rather
+ * than app state, so it lives outside the store and never triggers a render.
+ */
+let gestureActive = false;
+
 interface Store {
     /**
      * Visible elements — tombstones excluded. This is what every consumer
@@ -66,6 +72,18 @@ interface Store {
     zoomOut: () => void;
     resetZoom: () => void;
     zoomToFit: () => void;
+
+    /**
+     * Bracket a continuous edit — a drag, a draw, a resize, a slider sweep.
+     * beginGesture() snapshots history at most once however many times it is
+     * called, so tools can call it on every pointer move without checking.
+     * commitGesture() closes it; the sync layer will use that edge to flush one
+     * transaction per gesture rather than one per pointer event.
+     *
+     * One-shot edits (delete, paste, group) call addToHistory() directly.
+     */
+    beginGesture: () => void;
+    commitGesture: () => void;
 
     addToHistory: () => void;
     undo: () => void;
@@ -326,6 +344,21 @@ export const useStore = create<Store>()(
 
             toggleDarkMode: () =>
                 set((state) => ({ isDarkMode: !state.isDarkMode })),
+
+            beginGesture: () => {
+                if (gestureActive) return;
+                gestureActive = true;
+                set((state) => ({
+                    history: {
+                        past: [...state.history.past, state.allElements].slice(-HISTORY_LIMIT),
+                        future: [],
+                    },
+                }));
+            },
+
+            commitGesture: () => {
+                gestureActive = false;
+            },
 
             // History snapshots the full list so undo restores tombstone state
             // too — otherwise undoing a delete could not bring the element back.
