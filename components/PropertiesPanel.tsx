@@ -282,13 +282,16 @@ export default function PropertiesPanel() {
         return () => window.removeEventListener("resize", checkMobile);
     }, []);
 
-    useEffect(() => {
-        if (appState.selection.length === 0) {
-            setActiveMobilePanel(null);
-        }
-    }, [appState.selection]);
-
     const hasSelection = appState.selection.length > 0;
+
+    // Deselecting closes any open mobile sub-panel. Adjusting state during
+    // render (React's documented pattern) instead of in an effect, so the panel
+    // never paints once in the stale state before closing.
+    const [prevHasSelection, setPrevHasSelection] = useState(hasSelection);
+    if (prevHasSelection !== hasSelection) {
+        setPrevHasSelection(hasSelection);
+        if (!hasSelection) setActiveMobilePanel(null);
+    }
     const editingDefaults = !hasSelection;
 
     // Show the panel when something is selected OR a drawing tool is active (to set defaults).

@@ -9,9 +9,23 @@ import { EraserTool } from "@/lib/tools/EraserTool";
 import { getElementAtPosition } from "@/lib/math";
 import { ToolType } from "@/lib/types";
 
+// The cursor a tool shows when nothing more specific applies.
+const baseCursorForTool = (tool: ToolType): string => {
+    switch (tool) {
+        case "hand": return "grab";
+        case "text": return "text";
+        case "selection": return "default";
+        default: return "crosshair"; // drawing tools and the eraser
+    }
+};
+
 export function useCanvasLogic() {
     const { elements, appState, addElement, updateElement, removeElement, setSelection, addToHistory, setElements, setZoom, setScroll, setTool } = useStore();
-    const [cursor, setCursor] = useState("default");
+    // Cursor is the tool's base, unless something transient (hover over a resize
+    // handle, panning, holding Space) overrides it. Deriving the base rather than
+    // pushing it from an effect keeps the two from fighting over the same state.
+    const [cursorOverride, setCursorOverride] = useState<string | null>(null);
+    const setCursor = setCursorOverride;
     const [textInput, setTextInput] = useState<{ x: number; y: number; text: string; id: string } | null>(null);
     const [selectionRect, setSelectionRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
     const [isPanning, setIsPanning] = useState(false);
@@ -49,7 +63,9 @@ export function useCanvasLogic() {
         const onKeyUp = (e: KeyboardEvent) => {
             if (e.code === "Space") {
                 spaceDown.current = false;
-                setCursor("default");
+                // Fall back to the active tool rather than forcing an arrow —
+                // releasing Space over a drawing tool should restore its crosshair.
+                setCursorOverride(null);
             }
         };
         window.addEventListener("keydown", onKeyDown);
@@ -60,16 +76,17 @@ export function useCanvasLogic() {
         };
     }, []);
 
-    // Base cursor for the active tool (drawing tools show a crosshair).
-    useEffect(() => {
-        if (spaceDown.current) return;
-        const t = appState.tool;
-        if (t === "hand") setCursor("grab");
-        else if (t === "text") setCursor("text");
-        else if (t === "selection") setCursor("default");
-        else if (t === "eraser") setCursor("crosshair");
-        else setCursor("crosshair");
-    }, [appState.tool]);
+    // Switching tools drops whatever cursor the previous tool set for itself.
+    // Adjusting state during render (React's documented pattern) rather than in
+    // an effect avoids a second paint showing the stale cursor. If Space is held
+    // the next pointer move re-applies the grab cursor, so nothing is lost.
+    const [prevTool, setPrevTool] = useState(appState.tool);
+    if (prevTool !== appState.tool) {
+        setPrevTool(appState.tool);
+        setCursorOverride(null);
+    }
+
+    const cursor = cursorOverride ?? baseCursorForTool(appState.tool);
 
     const getMouseCoordinates = (e: React.MouseEvent | React.TouchEvent) => {
         let clientX, clientY;
@@ -150,7 +167,10 @@ export function useCanvasLogic() {
 
         if (isPanning || spaceDown.current || appState.tool === "hand") {
             lastMousePos.current = null;
-            setCursor(spaceDown.current ? "grab" : appState.tool === "hand" ? "grab" : "default");
+            // Still panning (Space held, or the hand tool) → back to "grab";
+            // otherwise drop the override so the active tool's cursor returns.
+            if (spaceDown.current || appState.tool === "hand") setCursor("grab");
+            else setCursorOverride(null);
             return;
         }
 
