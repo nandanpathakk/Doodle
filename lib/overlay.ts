@@ -55,17 +55,21 @@ export const isOverlayEmpty = (scene: OverlayScene): boolean =>
  * Elements peers are mid-gesture on, drawn beneath everything else so they read
  * as part of the drawing rather than as decoration.
  *
- * A draft is suppressed once an element of the same id exists locally: the
- * gesture has been committed and the real element is on the scene canvas, so
- * continuing to draw the draft would double it up for a frame.
+ * Every draft is drawn, including one whose id already exists in the document.
+ * That case is not a duplicate but the common one: a peer dragging or resizing
+ * something that is already committed. The scene canvas hides exactly the ids in
+ * a draft (see `peerDraftIds` in Canvas), so the draft is what stands in for the
+ * element while the gesture runs, and the two layers cannot both draw it.
+ *
+ * Tombstoned drafts are skipped — a peer deleting mid-gesture should make the
+ * element go away, not keep a copy of it alive on the overlay.
  */
-const peerDrafts = (scene: OverlayScene): Element[] => {
-    const existing = new Set(scene.elements.map((el) => el.id));
+export const peerDrafts = (scene: Pick<OverlayScene, "peers">): Element[] => {
     const drafts: Element[] = [];
     for (const peer of scene.peers) {
         if (!peer.draft) continue;
         for (const element of peer.draft) {
-            if (!element.isDeleted && !existing.has(element.id)) drafts.push(element);
+            if (!element.isDeleted) drafts.push(element);
         }
     }
     return drafts;
@@ -85,14 +89,20 @@ const drawSelectionMarquee = (ctx: CanvasRenderingContext2D, rect: Rect, zoom: n
  * Outline what each peer has selected, in their colour. Drawn per element
  * rather than as one combined box, so it reads as "they have those two" rather
  * than "they have this region".
+ *
+ * Drafts take precedence over the committed element of the same id, or the
+ * outline would sit at the position the drag started from while the shape moves
+ * out from under it.
  */
 const drawPeerSelections = (
     ctx: CanvasRenderingContext2D,
     peers: Peer[],
     elements: Element[],
+    drafts: Element[],
     zoom: number
 ) => {
     const byId = new Map(elements.map((el) => [el.id, el]));
+    for (const draft of drafts) byId.set(draft.id, draft);
 
     for (const peer of peers) {
         if (peer.selection.length === 0) continue;
@@ -228,7 +238,7 @@ export const drawOverlay = (canvas: HTMLCanvasElement, scene: OverlayScene): boo
     ctx.scale(zoom, zoom);
 
     if (scene.selectionRect) drawSelectionMarquee(ctx, scene.selectionRect, zoom);
-    drawPeerSelections(ctx, scene.peers, scene.elements, zoom);
+    drawPeerSelections(ctx, scene.peers, scene.elements, drafts, zoom);
 
     ctx.restore();
 
