@@ -60,6 +60,7 @@ const ADJECTIVES = ["Swift", "Quiet", "Bright", "Clever", "Calm", "Bold", "Keen"
 const ANIMALS = ["Otter", "Heron", "Fox", "Ibis", "Marten", "Finch", "Lynx", "Crane"];
 
 const NAME_KEY = "doodle-display-name";
+const NAME_CHOSEN_KEY = "doodle-display-name-chosen";
 
 /** A name to appear under, remembered between sessions. */
 export const getDisplayName = (): string => {
@@ -84,6 +85,29 @@ export const setDisplayName = (name: string): void => {
     }
 };
 
+/**
+ * Whether the name on file was picked by the user or generated for them.
+ *
+ * Kept as its own flag rather than inferred from the stored name, because a
+ * generated name is a perfectly valid thing to choose to keep — and someone who
+ * has decided "Warm Ibis" is fine should not be asked again every time.
+ */
+export const hasChosenName = (): boolean => {
+    try {
+        return localStorage.getItem(NAME_CHOSEN_KEY) === "1";
+    } catch {
+        return true; // cannot remember the answer, so do not keep asking
+    }
+};
+
+export const markNameChosen = (): void => {
+    try {
+        localStorage.setItem(NAME_CHOSEN_KEY, "1");
+    } catch {
+        // Same as above: the prompt just reappears next time.
+    }
+};
+
 // --- Live state -------------------------------------------------------------
 
 let awareness: Awareness | null = null;
@@ -94,6 +118,39 @@ const remotePeers = new Map<number, Peer>();
 
 const rosterListeners = new Set<() => void>();
 let roster: RosterEntry[] = [];
+
+/**
+ * How this client appears to everyone else: same shape as a roster entry, so
+ * the avatar list can show "you" alongside the peers rather than leaving you
+ * out of a room you are in.
+ *
+ * Null outside a room. The object is replaced only when it changes, so it is
+ * safe as a useSyncExternalStore snapshot.
+ */
+const localListeners = new Set<() => void>();
+let localEntry: RosterEntry | null = null;
+
+export const subscribeToLocalPresence = (fn: () => void): (() => void) => {
+    localListeners.add(fn);
+    return () => { localListeners.delete(fn); };
+};
+
+export const getLocalPresence = (): RosterEntry | null => localEntry;
+
+/** Null on the server, where there is no session to be present in. */
+export const getServerLocalPresence = (): RosterEntry | null => null;
+
+const setLocalEntry = (next: RosterEntry | null) => {
+    if (next === null && localEntry === null) return;
+    if (
+        next && localEntry &&
+        next.clientId === localEntry.clientId &&
+        next.name === localEntry.name &&
+        next.color === localEntry.color
+    ) return;
+    localEntry = next;
+    localListeners.forEach((fn) => fn());
+};
 
 /**
  * Ids of elements peers currently hold in a draft.
@@ -186,6 +243,7 @@ export function startPresence(a: Awareness): () => void {
         draft: null,
     };
     a.setLocalStateField("presence", localPresence);
+    setLocalEntry({ clientId: a.clientID, name: localPresence.name, color: localPresence.color });
     a.on("change", onAwarenessChange);
     readRemoteStates();
 
@@ -195,6 +253,7 @@ export function startPresence(a: Awareness): () => void {
         a.setLocalStateField("presence", null);
         awareness = null;
         localPresence = null;
+        setLocalEntry(null);
         remotePeers.clear();
         refreshRoster();
         refreshDraftIds();
@@ -270,9 +329,13 @@ export const publishDraft = (draft: Element[] | null): void => {
 };
 
 export const publishName = (name: string): void => {
-    if (!localPresence || localPresence.name === name) return;
     setDisplayName(name);
+    markNameChosen();
+    if (!localPresence || localPresence.name === name) return;
     localPresence = { ...localPresence, name };
+    if (awareness) {
+        setLocalEntry({ clientId: awareness.clientID, name, color: localPresence.color });
+    }
     publishSoon();
 };
 
