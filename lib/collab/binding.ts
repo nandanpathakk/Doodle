@@ -1,11 +1,12 @@
 import * as Y from "yjs";
-import { useStore, isGestureActive, onGestureEnd } from "@/store/useStore";
+import { useStore, isGestureActive, onGestureEnd, getGestureTouchedIds } from "@/store/useStore";
 import {
     LOCAL_ORIGIN,
     applyElementsToDoc,
     docToElements,
     getElementsMap,
 } from "./doc";
+import { publishDraft } from "./presence";
 
 /**
  * Two-way binding between the Zustand store (what the UI reads) and the Yjs
@@ -54,13 +55,28 @@ export function bindStoreToDoc(doc: Y.Doc): () => void {
 
     const unsubscribeStore = useStore.subscribe((state, prev) => {
         if (state.allElements === prev.allElements) return;
-        // Mid-gesture edits stay local; onGestureEnd flushes them as one
-        // transaction. Without this a drag would write once per pointer move.
-        if (isGestureActive()) return;
+
+        // Mid-gesture edits stay out of the document; onGestureEnd flushes them
+        // as one transaction. Without this a drag would write once per pointer
+        // move. They go over presence instead, so peers watch the work happen
+        // rather than waiting for the pointer to be released.
+        if (isGestureActive()) {
+            const touched = getGestureTouchedIds();
+            if (touched.size > 0) {
+                publishDraft(state.allElements.filter((el) => touched.has(el.id)));
+            }
+            return;
+        }
+
         pushToDoc();
     });
 
-    const unsubscribeGesture = onGestureEnd(pushToDoc);
+    const unsubscribeGesture = onGestureEnd(() => {
+        pushToDoc();
+        // Clear only after the real elements are in the document, so the draft
+        // is never withdrawn before what replaces it exists.
+        publishDraft(null);
+    });
 
     return () => {
         unsubscribeStore();

@@ -4,8 +4,15 @@ import { getStroke } from "perfect-freehand";
 import { getElementBounds } from "./math";
 import { getTextFont, getLineBaseline, TEXT_LINE_HEIGHT } from "./text";
 
-// Shape Cache
-const shapeCache = new Map<string, {
+/**
+ * Generated RoughJS shapes, reused across frames so a drag does not regenerate
+ * the sketchy geometry every pointer move.
+ *
+ * Each canvas needs its own: entries for elements not in the list being drawn
+ * are evicted, so a shared cache would have the scene and overlay layers
+ * continually evicting each other's work.
+ */
+export type ShapeCache = Map<string, {
     version: number;
     shape?: unknown;
     path?: Path2D;
@@ -22,7 +29,11 @@ const shapeCache = new Map<string, {
     relStart?: { x: number, y: number };
     relEnd?: { x: number, y: number };
     text?: string;
-}>();
+}>;
+
+export const createShapeCache = (): ShapeCache => new Map();
+
+const sceneCache: ShapeCache = createShapeCache();
 
 /**
  * Size a full-viewport canvas's backing store to the device pixel ratio so
@@ -52,10 +63,12 @@ export const renderScene = (
     appState: AppState,
     isDarkMode: boolean,
     editingId: string | null = null,
-    renderOptions?: { dpr?: number; background?: string }
+    renderOptions?: { dpr?: number; background?: string; cache?: ShapeCache }
 ) => {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
+    const shapeCache = renderOptions?.cache ?? sceneCache;
 
     const { zoom, scrollX, scrollY, selection } = appState;
 

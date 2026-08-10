@@ -20,10 +20,11 @@ export default function OverlayCanvas({ selectionRect }: { selectionRect: Rect |
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const appState = useStore((s) => s.appState);
     const elements = useStore((s) => s.elements);
+    const isDarkMode = useStore((s) => s.isDarkMode);
 
     // The loop reads the scene from a ref so that a change of props never has to
     // tear down and re-create the loop.
-    const sceneRef = useRef<Omit<OverlayScene, "peers">>({ appState, selectionRect, elements });
+    const sceneRef = useRef<Omit<OverlayScene, "peers">>({ appState, selectionRect, elements, isDarkMode });
     const wakeRef = useRef<(() => void) | null>(null);
 
     useEffect(() => {
@@ -72,7 +73,7 @@ export default function OverlayCanvas({ selectionRect }: { selectionRect: Rect |
     // effect rather than during render so the loop's state is never mutated
     // mid-render; the overlay is frame-driven anyway, so a frame's delay is free.
     useEffect(() => {
-        sceneRef.current = { appState, selectionRect, elements };
+        sceneRef.current = { appState, selectionRect, elements, isDarkMode };
         wakeRef.current?.();
     });
 

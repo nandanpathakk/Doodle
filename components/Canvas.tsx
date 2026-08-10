@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useStore } from "@/store/useStore";
 import { renderScene, sizeCanvasToViewport } from "@/lib/render";
 import { useCanvasLogic } from "@/hooks/useCanvasLogic";
 import OverlayCanvas from "./OverlayCanvas";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { getElementAtPosition } from "@/lib/math";
+import { subscribeToDraftIds, getDraftIds } from "@/lib/collab/presence";
 import CanvasTextInput from "./CanvasTextInput";
 import WelcomeScreen from "./WelcomeScreen";
 import ZoomIndicator from "./ZoomIndicator";
@@ -23,6 +24,17 @@ export default function Canvas() {
     const setSelection = useStore((s) => s.setSelection);
     const setZoom = useStore((s) => s.setZoom);
     const setScroll = useStore((s) => s.setScroll);
+    // Elements a peer is mid-gesture on are hidden here and drawn on the overlay
+    // instead, so a shape being dragged does not also sit frozen where the
+    // document still has it. This list only changes at gesture boundaries, so it
+    // costs one re-render per gesture rather than one per pointer move.
+    const peerDraftIds = useSyncExternalStore(subscribeToDraftIds, getDraftIds, getDraftIds);
+    const visibleElements = useMemo(() => {
+        if (peerDraftIds.length === 0) return elements;
+        const hidden = new Set(peerDraftIds);
+        return elements.filter((el) => !hidden.has(el.id));
+    }, [elements, peerDraftIds]);
+
     const [fontsReady, setFontsReady] = useState(false);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const frameRef = useRef<number | undefined>(undefined);
@@ -61,24 +73,24 @@ export default function Canvas() {
         if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
         frameRef.current = requestAnimationFrame(() => {
             sizeCanvasToViewport(canvas);
-            renderScene(canvas, elements, appState, isDarkMode, textInput?.id);
+            renderScene(canvas, visibleElements, appState, isDarkMode, textInput?.id);
         });
         return () => {
             if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
         };
-    }, [elements, appState, isDarkMode, textInput, fontsReady]);
+    }, [visibleElements, appState, isDarkMode, textInput, fontsReady]);
 
     useEffect(() => {
         const handleResize = () => {
             const canvas = canvasRef.current;
             if (canvas) {
                 sizeCanvasToViewport(canvas);
-                renderScene(canvas, elements, appState, isDarkMode, textInput?.id);
+                renderScene(canvas, visibleElements, appState, isDarkMode, textInput?.id);
             }
         };
         window.addEventListener("resize", handleResize);
         return () => window.removeEventListener("resize", handleResize);
-    }, [elements, appState, isDarkMode, textInput]);
+    }, [visibleElements, appState, isDarkMode, textInput]);
 
     // Add non-passive wheel listener to prevent browser zoom
     useEffect(() => {
@@ -167,7 +179,9 @@ export default function Canvas() {
             {contextMenu && (
                 <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
             )}
-            {isDocLoaded && elements.length === 0 && <WelcomeScreen />}
+            {/* A peer drawing into an empty canvas counts as content, or the
+                welcome copy sits behind their in-flight shape. */}
+            {isDocLoaded && elements.length === 0 && peerDraftIds.length === 0 && <WelcomeScreen />}
             <ZoomIndicator />
         </>
     );

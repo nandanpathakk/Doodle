@@ -52,6 +52,24 @@ let gestureActive = false;
 
 const gestureEndListeners = new Set<() => void>();
 
+/**
+ * Ids touched since the current gesture opened.
+ *
+ * The sync layer holds mid-gesture edits back from the document, so peers would
+ * otherwise see nothing until the pointer is released. Streaming just these
+ * elements over presence shows the work as it happens, without writing a
+ * document op per pointer move. Tracking ids here keeps that cheap: no diffing
+ * the whole scene on every move to work out what changed.
+ */
+const gestureTouched = new Set<string>();
+
+export const getGestureTouchedIds = (): Set<string> => gestureTouched;
+
+const noteTouched = (ids: string[]) => {
+    if (!gestureActive) return;
+    ids.forEach((id) => gestureTouched.add(id));
+};
+
 /** True while a continuous edit is in progress. */
 export const isGestureActive = () => gestureActive;
 
@@ -225,6 +243,7 @@ export const useStore = create<Store>()(
             // New elements almost always land on top, so scan from the end.
             addElement: (element) =>
                 set((state) => {
+                    noteTouched([element.id]);
                     const next = [...state.allElements];
                     let i = next.length;
                     while (i > 0 && compareIndex(next[i - 1], element) > 0) i--;
@@ -251,6 +270,7 @@ export const useStore = create<Store>()(
                 }),
 
             updateElement: (id, updates) =>
+                (noteTouched([id]),
                 set((state) =>
                     deriveElements(
                         state.allElements.map((el) =>
@@ -259,16 +279,18 @@ export const useStore = create<Store>()(
                                 : el
                         )
                     )
-                ),
+                )),
 
             replaceAllElements: (elements) =>
                 set(() => deriveElements(sortByIndex(elements))),
 
             removeElement: (id) =>
-                set((state) => deriveElements(tombstone(state.allElements, new Set([id])))),
+                (noteTouched([id]),
+                set((state) => deriveElements(tombstone(state.allElements, new Set([id]))))),
 
             removeElements: (ids) =>
-                set((state) => deriveElements(tombstone(state.allElements, new Set(ids)))),
+                (noteTouched(ids),
+                set((state) => deriveElements(tombstone(state.allElements, new Set(ids))))),
 
             clearElements: () =>
                 set((state) =>
@@ -398,7 +420,9 @@ export const useStore = create<Store>()(
                 set((state) => ({ isDarkMode: !state.isDarkMode })),
 
             beginGesture: () => {
+                if (gestureActive) return;
                 gestureActive = true;
+                gestureTouched.clear();
             },
 
             // Guarded so the pointer-release and pointer-press safety nets, which
@@ -406,7 +430,10 @@ export const useStore = create<Store>()(
             commitGesture: () => {
                 if (!gestureActive) return;
                 gestureActive = false;
+                // Listeners run before the set is cleared, so the sync layer can
+                // still see what the gesture touched when it flushes.
                 gestureEndListeners.forEach((fn) => fn());
+                gestureTouched.clear();
             },
 
             setUndoState: (canUndo, canRedo) => set(() => ({ canUndo, canRedo })),

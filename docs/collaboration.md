@@ -70,6 +70,15 @@ Things that are load-bearing and not obvious from a casual read.
 - **Remote presence never enters React state.** At ~30Hz per peer it would
   re-render the app hundreds of times a second; the overlay reads it directly
   on its frame loop. Only the roster reaches React, via useSyncExternalStore.
+- **Drafted element ids are published separately from the drafts themselves**
+  (`lib/collab/presence.ts`). The scene hides elements a peer is mid-gesture on,
+  or a dragged element appears twice — once frozen where the document still has
+  it, once following their pointer. The id *set* changes only at gesture
+  boundaries, so hiding costs one re-render per gesture, not one per move.
+- **The scene and overlay hold separate RoughJS shape caches**
+  (`lib/render.ts`). Each evicts entries for elements absent from the list it is
+  drawing, so a shared cache would have the two layers evicting each other every
+  frame.
 
 ## Latency design
 
@@ -78,7 +87,7 @@ The point of the architecture, in one place.
 1. **Two channels.** Committed elements go in the document. Cursors,
    selections, and *in-flight* gesture geometry go over awareness — ephemeral,
    unpersisted, outside undo history. A 400-point pencil stroke is one document
-   op, not 400.
+   op, not 400. *(done)*
 2. **Overlay canvas** (`lib/overlay.ts`). Remote cursors at ~30Hz per peer must
    not repaint the drawing or re-run RoughJS.
 3. **Cursor interpolation.** Lerp between updates; 30Hz data on a 120Hz display
@@ -98,7 +107,8 @@ The point of the architecture, in one place.
       edit the *same* text element at once. Today it is last-write-wins.
 - [x] **2** Server + rooms (relay, `/r/[roomId]`, start/join/leave)
 - [x] **3a** Presence: remote cursors, peer selections, avatars, rename
-- [ ] **3b** In-flight gesture streaming (draft strokes) and viewport follow
+- [x] **3b** In-flight gesture streaming (drafts)
+- [ ] **3c** Click-to-follow a peer's viewport
 - [ ] **4** Smoothness (interpolation, coalescing, RDP, load test)
 - [ ] **5** Optional E2E encryption
 

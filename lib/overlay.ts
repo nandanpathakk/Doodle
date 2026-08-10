@@ -1,6 +1,7 @@
 import type { AppState, Element } from "./types";
 import type { Peer } from "./collab/presence";
 import { getElementBounds } from "./math";
+import { renderScene, createShapeCache } from "./render";
 
 /**
  * The overlay is a second canvas stacked above the scene, for things that change
@@ -21,6 +22,7 @@ export interface Rect {
 
 export interface OverlayScene {
     appState: AppState;
+    isDarkMode: boolean;
     /** Marquee box while drag-selecting. */
     selectionRect: Rect | null;
     /** Needed to outline what peers have selected. */
@@ -43,8 +45,31 @@ const CURSOR_EASING = 0.28;
 /** Where each peer's cursor is currently drawn, as opposed to where it is. */
 const drawnCursors = new Map<number, { x: number; y: number }>();
 
+/** Separate from the scene's cache — see ShapeCache in lib/render.ts. */
+const draftCache = createShapeCache();
+
 export const isOverlayEmpty = (scene: OverlayScene): boolean =>
     !scene.selectionRect && scene.peers.length === 0;
+
+/**
+ * Elements peers are mid-gesture on, drawn beneath everything else so they read
+ * as part of the drawing rather than as decoration.
+ *
+ * A draft is suppressed once an element of the same id exists locally: the
+ * gesture has been committed and the real element is on the scene canvas, so
+ * continuing to draw the draft would double it up for a frame.
+ */
+const peerDrafts = (scene: OverlayScene): Element[] => {
+    const existing = new Set(scene.elements.map((el) => el.id));
+    const drafts: Element[] = [];
+    for (const peer of scene.peers) {
+        if (!peer.draft) continue;
+        for (const element of peer.draft) {
+            if (!element.isDeleted && !existing.has(element.id)) drafts.push(element);
+        }
+    }
+    return drafts;
+};
 
 const drawSelectionMarquee = (ctx: CanvasRenderingContext2D, rect: Rect, zoom: number) => {
     ctx.save();
@@ -174,14 +199,26 @@ export const drawOverlay = (canvas: HTMLCanvasElement, scene: OverlayScene): boo
     const ctx = canvas.getContext("2d");
     if (!ctx) return false;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (isOverlayEmpty(scene)) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
         drawnCursors.clear();
         return false;
     }
 
     const { zoom, scrollX, scrollY } = scene.appState;
     const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+
+    // renderScene clears the canvas itself, so it goes first and everything
+    // below draws on top. Its own cache keeps the two layers from evicting each
+    // other's generated shapes every frame.
+    const drafts = peerDrafts(scene);
+    if (drafts.length > 0) {
+        renderScene(canvas, drafts, { ...scene.appState, selection: [] }, scene.isDarkMode, null, {
+            cache: draftCache,
+        });
+    } else {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
 
     // World space: same screen = world * zoom + scroll transform as the scene
     // canvas, so the two layers stay registered while panning and zooming.

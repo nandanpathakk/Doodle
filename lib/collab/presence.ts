@@ -1,5 +1,5 @@
 import type { Awareness } from "y-protocols/awareness";
-import type { ToolType } from "../types.ts";
+import type { Element, ToolType } from "../types.ts";
 
 /**
  * Presence: who else is here, where their pointer is, and what they have
@@ -25,6 +25,12 @@ export interface Presence {
     cursor: { x: number; y: number } | null;
     selection: string[];
     tool: ToolType;
+    /**
+     * Elements being edited right now, before the gesture has been committed to
+     * the document. This is what lets peers watch a shape being dragged out
+     * rather than having it appear when the pointer is released.
+     */
+    draft: Element[] | null;
 }
 
 export interface Peer extends Presence {
@@ -89,6 +95,39 @@ const remotePeers = new Map<number, Peer>();
 const rosterListeners = new Set<() => void>();
 let roster: RosterEntry[] = [];
 
+/**
+ * Ids of elements peers currently hold in a draft.
+ *
+ * The scene canvas hides these, because the peer's uncommitted version is being
+ * drawn on the overlay — without it, an element being dragged appears twice:
+ * once frozen where the document still has it, once following their pointer.
+ *
+ * Kept separate from the drafts themselves, and only republished when the *set*
+ * changes, so hiding happens at gesture boundaries rather than re-rendering the
+ * scene on every pointer move.
+ */
+const draftIdsListeners = new Set<() => void>();
+let draftIds: string[] = [];
+
+export const subscribeToDraftIds = (fn: () => void): (() => void) => {
+    draftIdsListeners.add(fn);
+    return () => { draftIdsListeners.delete(fn); };
+};
+
+export const getDraftIds = (): string[] => draftIds;
+
+const refreshDraftIds = () => {
+    const next: string[] = [];
+    for (const peer of remotePeers.values()) {
+        if (!peer.draft) continue;
+        for (const element of peer.draft) next.push(element.id);
+    }
+    next.sort();
+    if (next.length === draftIds.length && next.every((id, i) => id === draftIds[i])) return;
+    draftIds = next;
+    draftIdsListeners.forEach((fn) => fn());
+};
+
 export const getRemotePeers = (): Map<number, Peer> => remotePeers;
 
 /**
@@ -127,6 +166,7 @@ const readRemoteStates = () => {
         remotePeers.set(clientId, { ...presence, clientId });
     });
     refreshRoster();
+    refreshDraftIds();
 };
 
 const onAwarenessChange = () => readRemoteStates();
@@ -143,6 +183,7 @@ export function startPresence(a: Awareness): () => void {
         cursor: null,
         selection: [],
         tool: "selection",
+        draft: null,
     };
     a.setLocalStateField("presence", localPresence);
     a.on("change", onAwarenessChange);
@@ -156,6 +197,7 @@ export function startPresence(a: Awareness): () => void {
         localPresence = null;
         remotePeers.clear();
         refreshRoster();
+        refreshDraftIds();
     };
 }
 
@@ -208,6 +250,25 @@ export const publishTool = (tool: ToolType): void => {
     publishSoon();
 };
 
+/**
+ * Stream the elements of an in-flight gesture, or null to clear.
+ *
+ * Published immediately rather than through the coalescer when clearing, so the
+ * draft disappears the moment the real element arrives instead of lingering for
+ * a frame as a duplicate.
+ */
+export const publishDraft = (draft: Element[] | null): void => {
+    if (!localPresence) return;
+    if (localPresence.draft === null && draft === null) return;
+    localPresence = { ...localPresence, draft };
+    if (draft === null) {
+        if (pendingPublish !== null) { clearTimeout(pendingPublish); pendingPublish = null; }
+        if (awareness) awareness.setLocalStateField("presence", localPresence);
+        return;
+    }
+    publishSoon();
+};
+
 export const publishName = (name: string): void => {
     if (!localPresence || localPresence.name === name) return;
     setDisplayName(name);
@@ -216,4 +277,5 @@ export const publishName = (name: string): void => {
 };
 
 export const isPresenceActive = (): boolean => awareness !== null;
+
 
