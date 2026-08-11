@@ -31,12 +31,17 @@ import {
 const initials = (name: string) =>
     name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] ?? "").join("").toUpperCase() || "?";
 
-function Avatar({ entry, you }: { entry: RosterEntry; you?: boolean }) {
+function Avatar({ entry, you, followed }: { entry: RosterEntry; you?: boolean; followed?: boolean }) {
+    const label = you ? `${entry.name} (you)` : followed ? `${entry.name} — following` : entry.name;
     return (
         <div
-            title={you ? `${entry.name} (you)` : entry.name}
-            aria-label={you ? `${entry.name} (you)` : entry.name}
-            className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-[10px] font-semibold text-white shadow-sm dark:border-[#232329]"
+            title={label}
+            aria-label={label}
+            className={`flex h-7 w-7 items-center justify-center rounded-full border-2 text-[10px] font-semibold text-white shadow-sm ${
+                followed
+                    ? "border-indigo-500 dark:border-indigo-400"
+                    : "border-white dark:border-[#232329]"
+            }`}
             style={{ backgroundColor: entry.color }}
         >
             {initials(entry.name)}
@@ -51,6 +56,8 @@ export default function SessionBar() {
     // imperatively instead.
     const roomId = useStore((s) => s.roomId);
     const connection = useStore((s) => s.connection);
+    const following = useStore((s) => s.followingClientId);
+    const setFollowing = useStore((s) => s.setFollowing);
     const router = useRouter();
     const ref = useRef<HTMLDivElement>(null);
 
@@ -164,7 +171,12 @@ export default function SessionBar() {
                 {connected ? (
                     <div className="flex -space-x-1.5">
                         {everyone.slice(0, 4).map((entry) => (
-                            <Avatar key={entry.clientId} entry={entry} you={entry === local} />
+                            <Avatar
+                                key={entry.clientId}
+                                entry={entry}
+                                you={entry === local}
+                                followed={entry.clientId === following}
+                            />
                         ))}
                         {everyone.length > 4 && (
                             <div className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-zinc-500 text-[10px] font-semibold text-white shadow-sm dark:border-[#232329]">
@@ -185,6 +197,47 @@ export default function SessionBar() {
                     aria-label="Shared session"
                     className="absolute right-0 top-full mt-2 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-2xl md:bottom-full md:top-auto md:mb-2 md:mt-0 dark:border-zinc-800 dark:bg-[#232329]"
                 >
+                    {roster.length > 0 && (
+                        <>
+                            <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                                In this room
+                            </p>
+                            <ul className="mb-3 mt-1 flex flex-col gap-0.5">
+                                {roster.map((peer) => {
+                                    const isFollowed = peer.clientId === following;
+                                    return (
+                                        <li key={peer.clientId}>
+                                            {/* Following moves this canvas with theirs; panning
+                                                or zooming yourself stops it, so there is nothing
+                                                to remember to switch off. */}
+                                            <button
+                                                onClick={() => setFollowing(isFollowed ? null : peer.clientId)}
+                                                aria-pressed={isFollowed}
+                                                title={isFollowed ? `Stop following ${peer.name}` : `Follow ${peer.name}`}
+                                                className={`flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left text-sm transition-colors ${
+                                                    isFollowed
+                                                        ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300"
+                                                        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                                                }`}
+                                            >
+                                                <span
+                                                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold text-white"
+                                                    style={{ backgroundColor: peer.color }}
+                                                >
+                                                    {initials(peer.name)}
+                                                </span>
+                                                <span className="min-w-0 flex-1 truncate">{peer.name}</span>
+                                                <span className="shrink-0 text-[11px] text-zinc-400 dark:text-zinc-500">
+                                                    {isFollowed ? "Following" : "Follow"}
+                                                </span>
+                                            </button>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        </>
+                    )}
+
                     <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">
                         Your name
                         <input

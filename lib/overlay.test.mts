@@ -30,7 +30,7 @@ const el = (id: string, over: Partial<Element> = {}): Element => ({
 
 const peer = (clientId: number, draft: Element[] | null): Peer => ({
     clientId, name: `Peer ${clientId}`, color: "#e03131",
-    cursor: null, selection: [], tool: "selection", draft,
+    cursor: null, selection: [], tool: "selection", viewport: null, draft,
 });
 
 const appState: AppState = {

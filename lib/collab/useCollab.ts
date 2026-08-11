@@ -12,6 +12,7 @@ import { getElementsMap, gcDocTombstones, LOCAL_ORIGIN } from "./doc";
 import { readLegacyElements, markLegacyImported } from "./legacy";
 import { docNameFor, readRoomSeed, clearRoomSeed, relayUrl } from "./session";
 import { startPresence } from "./presence";
+import { startFollowSync } from "./follow";
 
 /**
  * Identifies the session that currently owns the shared store state.
@@ -61,6 +62,7 @@ export function useCollab(roomId: string | null = null): void {
         let disposeUndo: (() => void) | undefined;
         let provider: WebsocketProvider | undefined;
         let stopPresence: (() => void) | undefined;
+        let stopFollow: (() => void) | undefined;
 
         const start = (initial: Element[]) => {
             // Set the store from this session before binding, rather than
@@ -80,6 +82,8 @@ export function useCollab(roomId: string | null = null): void {
                     useStore.getState().setConnection(status === "connected" ? "connected" : "connecting");
                 });
                 stopPresence = startPresence(provider.awareness);
+                // After presence: the first thing it does is publish a viewport.
+                stopFollow = startFollowSync();
             }
 
             useStore.getState().setDocLoaded(true);
@@ -122,6 +126,7 @@ export function useCollab(roomId: string | null = null): void {
             cancelled = true;
             // Withdraw our presence before dropping the socket, so peers see us
             // leave rather than watching a cursor freeze.
+            stopFollow?.();
             stopPresence?.();
             provider?.destroy();
             disposeUndo?.();

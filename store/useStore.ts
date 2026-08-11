@@ -112,10 +112,17 @@ interface Store {
     roomId: string | null;
     /** Relay connection state. Always "offline" outside a room. */
     connection: ConnectionStatus;
+    /**
+     * Peer whose viewport this canvas is mirroring, or null. Set by clicking
+     * someone in the session panel; cleared the moment you pan or zoom
+     * yourself, which is how you stop.
+     */
+    followingClientId: number | null;
 
     setDocLoaded: (loaded: boolean) => void;
     setSession: (roomId: string | null, connection: ConnectionStatus) => void;
     setConnection: (connection: ConnectionStatus) => void;
+    setFollowing: (clientId: number | null) => void;
     setTool: (tool: ToolType) => void;
     addElement: (element: Element) => void;
     updateElement: (id: string, updates: Partial<Element>) => void;
@@ -124,6 +131,8 @@ interface Store {
     setSelection: (ids: string[]) => void;
     setZoom: (zoom: number) => void;
     setScroll: (x: number, y: number) => void;
+    /** Pan and zoom together, so mirroring a peer's viewport is one update. */
+    setViewport: (viewport: { scrollX: number; scrollY: number; zoom: number }) => void;
     setElements: (elements: Element[]) => void;
     /**
      * Replace the element set from the synced document, which is the authority
@@ -216,6 +225,7 @@ export const useStore = create<Store>()(
             isDocLoaded: false,
             roomId: null,
             connection: "offline",
+            followingClientId: null,
             currentStyle: {
                 strokeColor: "#000000",
                 backgroundColor: "transparent",
@@ -232,6 +242,7 @@ export const useStore = create<Store>()(
 
             setSession: (roomId, connection) => set(() => ({ roomId, connection })),
             setConnection: (connection) => set(() => ({ connection })),
+            setFollowing: (clientId) => set(() => ({ followingClientId: clientId })),
 
             setTool: (tool) =>
                 set((state) => ({ appState: { ...state.appState, tool } })),
@@ -415,6 +426,9 @@ export const useStore = create<Store>()(
 
             setScroll: (x, y) =>
                 set((state) => ({ appState: { ...state.appState, scrollX: x, scrollY: y } })),
+
+            setViewport: ({ scrollX, scrollY, zoom }) =>
+                set((state) => ({ appState: { ...state.appState, scrollX, scrollY, zoom } })),
 
             toggleDarkMode: () =>
                 set((state) => ({ isDarkMode: !state.isDarkMode })),

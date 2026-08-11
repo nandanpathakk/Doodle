@@ -18,6 +18,12 @@ import type { Element, ToolType } from "../types.ts";
  * only when someone joins, leaves, or renames.
  */
 
+export interface Viewport {
+    scrollX: number;
+    scrollY: number;
+    zoom: number;
+}
+
 export interface Presence {
     name: string;
     color: string;
@@ -25,6 +31,12 @@ export interface Presence {
     cursor: { x: number; y: number } | null;
     selection: string[];
     tool: ToolType;
+    /**
+     * Where this peer is looking. Published so others can follow along; changes
+     * only when someone pans or zooms, so it rides with the rest of presence
+     * rather than needing a channel of its own.
+     */
+    viewport: Viewport | null;
     /**
      * Elements being edited right now, before the gesture has been committed to
      * the document. This is what lets peers watch a shape being dragged out
@@ -188,6 +200,19 @@ const refreshDraftIds = () => {
 export const getRemotePeers = (): Map<number, Peer> => remotePeers;
 
 /**
+ * Any change to any peer — including cursor movement, so this fires often.
+ * Meant for the frame-loop-adjacent things that read peers directly; anything
+ * that would re-render React should use the roster or draft-id subscriptions,
+ * which only fire when their own slice changes.
+ */
+const peerListeners = new Set<() => void>();
+
+export const subscribeToPeers = (fn: () => void): (() => void) => {
+    peerListeners.add(fn);
+    return () => { peerListeners.delete(fn); };
+};
+
+/**
  * Subscribe to roster changes. Shaped for useSyncExternalStore: the callback is
  * not invoked on subscribe, and getRoster returns a stable reference that only
  * changes when the roster genuinely differs.
@@ -224,6 +249,7 @@ const readRemoteStates = () => {
     });
     refreshRoster();
     refreshDraftIds();
+    peerListeners.forEach((fn) => fn());
 };
 
 const onAwarenessChange = () => readRemoteStates();
@@ -240,6 +266,7 @@ export function startPresence(a: Awareness): () => void {
         cursor: null,
         selection: [],
         tool: "selection",
+        viewport: null,
         draft: null,
     };
     a.setLocalStateField("presence", localPresence);
@@ -325,6 +352,24 @@ export const publishDraft = (draft: Element[] | null): void => {
         if (awareness) awareness.setLocalStateField("presence", localPresence);
         return;
     }
+    publishSoon();
+};
+
+/**
+ * Publish where we are looking. Coalesced like the rest, though panning already
+ * arrives far slower than a cursor does.
+ */
+export const publishViewport = (viewport: Viewport | null): void => {
+    if (!localPresence) return;
+    const current = localPresence.viewport;
+    if (current === viewport) return;
+    if (
+        current && viewport &&
+        current.scrollX === viewport.scrollX &&
+        current.scrollY === viewport.scrollY &&
+        current.zoom === viewport.zoom
+    ) return;
+    localPresence = { ...localPresence, viewport };
     publishSoon();
 };
 
