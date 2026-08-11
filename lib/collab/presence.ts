@@ -37,6 +37,8 @@ export interface Presence {
      * rather than needing a channel of its own.
      */
     viewport: Viewport | null;
+    /** Whose viewport this peer is mirroring, so we can tell them we are. */
+    following: number | null;
     /**
      * Elements being edited right now, before the gesture has been committed to
      * the document. This is what lets peers watch a shape being dragged out
@@ -54,6 +56,12 @@ export interface RosterEntry {
     clientId: number;
     name: string;
     color: string;
+    /**
+     * Who this person is following, if anyone. Carried on the roster rather
+     * than read from the peer map because it changes about as often as a name
+     * does, and this is the slice React already subscribes to.
+     */
+    following: number | null;
 }
 
 /**
@@ -158,7 +166,8 @@ const setLocalEntry = (next: RosterEntry | null) => {
         next && localEntry &&
         next.clientId === localEntry.clientId &&
         next.name === localEntry.name &&
-        next.color === localEntry.color
+        next.color === localEntry.color &&
+        next.following === localEntry.following
     ) return;
     localEntry = next;
     localListeners.forEach((fn) => fn());
@@ -226,12 +235,14 @@ export const getRoster = (): RosterEntry[] => roster;
 
 const sameRoster = (a: RosterEntry[], b: RosterEntry[]) =>
     a.length === b.length &&
-    a.every((entry, i) => entry.clientId === b[i].clientId && entry.name === b[i].name && entry.color === b[i].color);
+    a.every((entry, i) =>
+        entry.clientId === b[i].clientId && entry.name === b[i].name &&
+        entry.color === b[i].color && entry.following === b[i].following);
 
 /** Recompute the roster, notifying only when it actually differs. */
 const refreshRoster = () => {
     const next = [...remotePeers.values()]
-        .map(({ clientId, name, color }) => ({ clientId, name, color }))
+        .map(({ clientId, name, color, following }) => ({ clientId, name, color, following: following ?? null }))
         .sort((a, b) => a.clientId - b.clientId);
     if (sameRoster(next, roster)) return;
     roster = next;
@@ -267,10 +278,13 @@ export function startPresence(a: Awareness): () => void {
         selection: [],
         tool: "selection",
         viewport: null,
+        following: null,
         draft: null,
     };
     a.setLocalStateField("presence", localPresence);
-    setLocalEntry({ clientId: a.clientID, name: localPresence.name, color: localPresence.color });
+    setLocalEntry({
+        clientId: a.clientID, name: localPresence.name, color: localPresence.color, following: null,
+    });
     a.on("change", onAwarenessChange);
     readRemoteStates();
 
@@ -379,7 +393,23 @@ export const publishName = (name: string): void => {
     if (!localPresence || localPresence.name === name) return;
     localPresence = { ...localPresence, name };
     if (awareness) {
-        setLocalEntry({ clientId: awareness.clientID, name, color: localPresence.color });
+        setLocalEntry({
+            clientId: awareness.clientID, name,
+            color: localPresence.color, following: localPresence.following,
+        });
+    }
+    publishSoon();
+};
+
+/** Tell the room whose viewport we are mirroring, so they can be told. */
+export const publishFollowing = (clientId: number | null): void => {
+    if (!localPresence || localPresence.following === clientId) return;
+    localPresence = { ...localPresence, following: clientId };
+    if (awareness) {
+        setLocalEntry({
+            clientId: awareness.clientID, name: localPresence.name,
+            color: localPresence.color, following: clientId,
+        });
     }
     publishSoon();
 };

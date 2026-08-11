@@ -63,7 +63,7 @@ const fakeAwareness = (clientID: number) => {
 
 const peer = (over: Partial<Peer> = {}): Partial<Peer> => ({
     name: "Ada", color: "#e03131", cursor: null, selection: [],
-    tool: "selection", viewport: null, draft: null, ...over,
+    tool: "selection", viewport: null, following: null, draft: null, ...over,
 });
 
 const setup = (clientID = 1) => {

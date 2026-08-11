@@ -25,6 +25,13 @@ import { startFollowSync } from "./follow";
 let activeSession: object | null = null;
 
 /**
+ * How long to keep saying "Reconnecting…" before admitting the relay is not
+ * answering. Long enough to ride out a dropped connection or a server restart,
+ * short enough that someone who forgot to start the relay is not left guessing.
+ */
+const UNREACHABLE_AFTER_MS = 6000;
+
+/**
  * Owns the document for this session: creates it, restores it from IndexedDB,
  * connects it to the relay when in a room, and binds it to the store.
  *
@@ -63,6 +70,7 @@ export function useCollab(roomId: string | null = null): void {
         let provider: WebsocketProvider | undefined;
         let stopPresence: (() => void) | undefined;
         let stopFollow: (() => void) | undefined;
+        let unreachableTimer: ReturnType<typeof setTimeout> | undefined;
 
         const start = (initial: Element[]) => {
             // Set the store from this session before binding, rather than
@@ -79,7 +87,26 @@ export function useCollab(roomId: string | null = null): void {
                 provider = new WebsocketProvider(relayUrl(), roomId, doc, { connect: true });
                 provider.on("status", ({ status }: { status: string }) => {
                     if (cancelled) return;
-                    useStore.getState().setConnection(status === "connected" ? "connected" : "connecting");
+                    if (status === "connected") {
+                        if (unreachableTimer !== undefined) {
+                            clearTimeout(unreachableTimer);
+                            unreachableTimer = undefined;
+                        }
+                        useStore.getState().setConnection("connected");
+                        return;
+                    }
+                    // y-websocket retries forever, so "connecting" on its own
+                    // never stops being true and says nothing about whether the
+                    // relay is there. Give it a few seconds, then say so.
+                    if (useStore.getState().connection !== "unreachable") {
+                        useStore.getState().setConnection("connecting");
+                    }
+                    if (unreachableTimer === undefined) {
+                        unreachableTimer = setTimeout(() => {
+                            unreachableTimer = undefined;
+                            if (!cancelled) useStore.getState().setConnection("unreachable");
+                        }, UNREACHABLE_AFTER_MS);
+                    }
                 });
                 stopPresence = startPresence(provider.awareness);
                 // After presence: the first thing it does is publish a viewport.
@@ -124,6 +151,7 @@ export function useCollab(roomId: string | null = null): void {
 
         return () => {
             cancelled = true;
+            if (unreachableTimer !== undefined) clearTimeout(unreachableTimer);
             // Withdraw our presence before dropping the socket, so peers see us
             // leave rather than watching a cursor freeze.
             stopFollow?.();

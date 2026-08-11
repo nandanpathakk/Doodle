@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check, Copy, LogOut, Share2 } from "lucide-react";
 import { useStore } from "@/store/useStore";
-import { createRoomId, roomUrl, stashRoomSeed } from "@/lib/collab/session";
+import { createRoomId, relayUrl, roomUrl, stashRoomSeed } from "@/lib/collab/session";
 import {
     getLocalPresence, getRoster, getServerLocalPresence, hasChosenName,
     markNameChosen, publishName, subscribeToLocalPresence, subscribeToRoster,
@@ -33,18 +33,28 @@ const initials = (name: string) =>
 
 function Avatar({ entry, you, followed }: { entry: RosterEntry; you?: boolean; followed?: boolean }) {
     const label = you ? `${entry.name} (you)` : followed ? `${entry.name} — following` : entry.name;
+    // `z-10` on your own avatar: the stack overlaps, and without it the
+    // neighbouring avatar clips the "you" badge.
     return (
-        <div
-            title={label}
-            aria-label={label}
-            className={`flex h-7 w-7 items-center justify-center rounded-full border-2 text-[10px] font-semibold text-white shadow-sm ${
-                followed
-                    ? "border-indigo-500 dark:border-indigo-400"
-                    : "border-white dark:border-[#232329]"
-            }`}
-            style={{ backgroundColor: entry.color }}
-        >
-            {initials(entry.name)}
+        <div className={`relative ${you ? "z-10" : ""}`}>
+            <div
+                title={label}
+                aria-label={label}
+                className={`flex h-7 w-7 items-center justify-center rounded-full border-2 text-[10px] font-semibold text-white shadow-sm ${
+                    followed
+                        ? "border-indigo-500 dark:border-indigo-400"
+                        : "border-white dark:border-[#232329]"
+                }`}
+                style={{ backgroundColor: entry.color }}
+            >
+                {initials(entry.name)}
+            </div>
+            {/* Which one is you, without a tooltip nobody hovers for. */}
+            {you && (
+                <span className="absolute -bottom-0.5 -right-0.5 rounded-full border border-white bg-zinc-700 px-1 text-[7px] font-bold uppercase leading-[10px] tracking-wide text-white dark:border-[#232329] dark:bg-zinc-300 dark:text-zinc-900">
+                    you
+                </span>
+            )}
         </div>
     );
 }
@@ -122,7 +132,11 @@ export default function SessionBar() {
     }
 
     const connected = connection === "connected";
+    const unreachable = connection === "unreachable";
     const link = roomUrl(roomId);
+    // Who is mirroring our viewport. Worth showing: otherwise someone's canvas
+    // moves with yours and they have no way to know why.
+    const followers = local ? roster.filter((peer) => peer.following === local.clientId) : [];
     // Everyone in the room, you first, so the room is never shown as empty when
     // you are standing in it.
     const everyone: RosterEntry[] = local ? [local, ...roster] : roster;
@@ -153,7 +167,11 @@ export default function SessionBar() {
                 onClick={() => setOpen((o) => !o)}
                 aria-haspopup="dialog"
                 aria-expanded={open}
-                title={connected ? "Shared session" : "Reconnecting to the relay…"}
+                title={
+                    connected ? "Shared session"
+                        : unreachable ? "Cannot reach the relay"
+                            : "Reconnecting to the relay…"
+                }
                 className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white py-2 pl-3 pr-2.5 shadow-sm transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-[#232329] dark:hover:bg-zinc-800"
             >
                 {/* The connection state is reported plainly rather than
@@ -164,7 +182,9 @@ export default function SessionBar() {
                         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
                     )}
                     <span
-                        className={`relative inline-flex h-2.5 w-2.5 rounded-full ${connected ? "bg-emerald-500" : "bg-amber-500"}`}
+                        className={`relative inline-flex h-2.5 w-2.5 rounded-full ${
+                            connected ? "bg-emerald-500" : unreachable ? "bg-rose-500" : "bg-amber-500"
+                        }`}
                     />
                 </span>
 
@@ -185,7 +205,9 @@ export default function SessionBar() {
                         )}
                     </div>
                 ) : (
-                    <span className="text-sm text-zinc-700 dark:text-zinc-200">Reconnecting…</span>
+                    <span className="text-sm text-zinc-700 dark:text-zinc-200">
+                        {unreachable ? "Offline" : "Reconnecting…"}
+                    </span>
                 )}
 
                 <Share2 size={16} className="ml-0.5 text-zinc-500 dark:text-zinc-400" />
@@ -197,6 +219,28 @@ export default function SessionBar() {
                     aria-label="Shared session"
                     className="absolute right-0 top-full mt-2 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-2xl md:bottom-full md:top-auto md:mb-2 md:mt-0 dark:border-zinc-800 dark:bg-[#232329]"
                 >
+                    {/* Said plainly. Edits are not lost, but they are not
+                        reaching anyone either, and those are different things. */}
+                    {!connected && (
+                        <p className={`mb-3 rounded-lg px-2 py-1.5 text-xs leading-snug ${
+                            unreachable
+                                ? "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300"
+                                : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"
+                        }`}>
+                            {unreachable
+                                ? <>No answer from <span className="font-medium">{relayUrl()}</span>. Your changes are saved on this device and will sync when it is back.</>
+                                : <>Reconnecting. Your changes are saved on this device and are not reaching anyone yet.</>}
+                        </p>
+                    )}
+
+                    {followers.length > 0 && (
+                        <p className="mb-3 rounded-lg bg-indigo-50 px-2 py-1.5 text-xs leading-snug text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
+                            {followers.length === 1
+                                ? `${followers[0].name} is following your view.`
+                                : `${followers.length} people are following your view.`}
+                        </p>
+                    )}
+
                     {roster.length > 0 && (
                         <>
                             <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
@@ -226,7 +270,14 @@ export default function SessionBar() {
                                                 >
                                                     {initials(peer.name)}
                                                 </span>
-                                                <span className="min-w-0 flex-1 truncate">{peer.name}</span>
+                                                <span className="min-w-0 flex-1 truncate">
+                                                    {peer.name}
+                                                    {peer.following === local?.clientId && (
+                                                        <span className="ml-1.5 text-[11px] text-indigo-500 dark:text-indigo-400">
+                                                            following you
+                                                        </span>
+                                                    )}
+                                                </span>
                                                 <span className="shrink-0 text-[11px] text-zinc-400 dark:text-zinc-500">
                                                     {isFollowed ? "Following" : "Follow"}
                                                 </span>

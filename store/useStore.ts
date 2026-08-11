@@ -25,8 +25,15 @@ export const registerUndoHandler = (handler: UndoHandler): (() => void) => {
     };
 };
 
-/** Relay connection state, surfaced so the UI can show it honestly. */
-export type ConnectionStatus = "offline" | "connecting" | "connected";
+/**
+ * Relay connection state, surfaced so the UI can show it honestly.
+ *
+ * `unreachable` is separate from `connecting` on purpose. Retrying forever and
+ * saying "Reconnecting…" is indistinguishable from a relay that is not running
+ * at all, and the two call for different things from the user — one is worth
+ * waiting out, the other is not.
+ */
+export type ConnectionStatus = "offline" | "connecting" | "connected" | "unreachable";
 
 // Style applied to newly created elements (and the "last used" style).
 export interface CurrentStyle {

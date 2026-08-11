@@ -1,6 +1,6 @@
 import { useStore } from "@/store/useStore";
 import {
-    getRemotePeers, publishViewport, subscribeToPeers, type Viewport,
+    getRemotePeers, publishFollowing, publishViewport, subscribeToPeers, type Viewport,
 } from "./presence";
 
 /**
@@ -40,9 +40,19 @@ const same = (a: Viewport | null, b: Viewport | null): boolean =>
  */
 export function startFollowSync(): () => void {
     let published = viewportOf(useStore.getState().appState);
+    let publishedFollowing = useStore.getState().followingClientId;
     publishViewport(published);
+    publishFollowing(publishedFollowing);
 
     const unsubscribeStore = useStore.subscribe((state) => {
+        // Who we follow is published too, so the person being followed can be
+        // told. Checked before the viewport, because stopping is often the same
+        // store change as the pan that stopped it.
+        if (state.followingClientId !== publishedFollowing) {
+            publishedFollowing = state.followingClientId;
+            publishFollowing(publishedFollowing);
+        }
+
         const next = viewportOf(state.appState);
         if (same(next, published)) return;
         published = next;
@@ -83,6 +93,7 @@ export function startFollowSync(): () => void {
         unsubscribeStore();
         unsubscribePeers();
         useStore.getState().setFollowing(null);
+        publishFollowing(null);
         publishViewport(null);
     };
 }
