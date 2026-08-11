@@ -37,10 +37,75 @@ const sameValue = (a: unknown, b: unknown): boolean => {
     return false;
 };
 
+/**
+ * `text` is the one field held as a collaborative type rather than a plain
+ * value, because it is the one field two people edit *inside* at the same time.
+ * Every other field is replaced whole — you cannot half-move a rectangle — but
+ * two people typing in the same label at different offsets both mean it, and
+ * writing the string whole would keep only whichever keystroke landed last.
+ */
+const TEXT_KEY = "text";
+
+/**
+ * Turn "the string is now this" into the smallest insert/delete that makes it
+ * so, by keeping the common prefix and suffix.
+ *
+ * The diff lives here rather than in the editor on purpose: the rest of the app
+ * says what an element *is* and knows nothing about sync, and a diff computed
+ * against the document is correct even when a peer's edit landed between the
+ * editor's last render and this write.
+ *
+ * A real character diff would do better on a reordering, but nobody reorders
+ * text by retyping it — this is a caret, and a caret makes one contiguous edit.
+ */
+const applyTextDiff = (yText: Y.Text, next: string): void => {
+    const current = yText.toString();
+    if (current === next) return;
+
+    const max = Math.min(current.length, next.length);
+    let prefix = 0;
+    while (prefix < max && current[prefix] === next[prefix]) prefix++;
+    let suffix = 0;
+    while (
+        suffix < max - prefix &&
+        current[current.length - 1 - suffix] === next[next.length - 1 - suffix]
+    ) suffix++;
+
+    // Yjs indexes UTF-16 code units, as JavaScript does, so a boundary can land
+    // between the halves of an astral character — an emoji — and split it into
+    // two replacement characters. Back off rather than cut one in half.
+    const isLowSurrogate = (c: number) => c >= 0xdc00 && c <= 0xdfff;
+    if (prefix > 0 && prefix < next.length && isLowSurrogate(next.charCodeAt(prefix))) prefix--;
+    if (suffix > 0 && isLowSurrogate(next.charCodeAt(next.length - suffix))) suffix--;
+
+    const removed = current.length - prefix - suffix;
+    if (removed > 0) yText.delete(prefix, removed);
+    const inserted = next.slice(prefix, next.length - suffix);
+    if (inserted.length > 0) yText.insert(prefix, inserted);
+};
+
+/**
+ * Set the text of an element, merging rather than replacing where possible.
+ *
+ * Documents written before text became collaborative hold a plain string; those
+ * are upgraded on the first write. Nothing has to migrate eagerly, because
+ * reading handles both.
+ */
+const setText = (yEl: YElement, next: string): void => {
+    const current = yEl.get(TEXT_KEY);
+    if (current instanceof Y.Text) {
+        applyTextDiff(current, next);
+        return;
+    }
+    yEl.set(TEXT_KEY, new Y.Text(next));
+};
+
 const toYElement = (el: Element): YElement => {
     const m: YElement = new Y.Map();
     for (const [k, v] of Object.entries(el)) {
-        if (v !== undefined) m.set(k, v);
+        if (v === undefined) continue;
+        if (k === TEXT_KEY) m.set(k, new Y.Text(v as string));
+        else m.set(k, v);
     }
     return m;
 };
@@ -67,6 +132,8 @@ export const applyElementsToDoc = (yElements: YElements, elements: Element[]): v
         for (const [k, v] of Object.entries(el)) {
             if (v === undefined) {
                 if (existing.has(k)) existing.delete(k);
+            } else if (k === TEXT_KEY) {
+                setText(existing, v as string);
             } else if (!sameValue(existing.get(k), v)) {
                 existing.set(k, v);
             }
@@ -105,7 +172,13 @@ export const gcDocTombstones = (yElements: YElements, now = Date.now()): number 
     return stale.length;
 };
 
-/** Read the whole element set back out, in z-order. */
+/**
+ * Read the whole element set back out, in z-order.
+ *
+ * `toJSON` flattens the nested `Y.Text` back to a plain string, so the store
+ * and everything above it still sees an ordinary `Element` and needs to know
+ * nothing about how text is stored.
+ */
 export const docToElements = (yElements: YElements): Element[] => {
     const out: Element[] = [];
     yElements.forEach((yEl) => out.push(yEl.toJSON() as Element));

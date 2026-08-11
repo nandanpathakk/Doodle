@@ -9,6 +9,7 @@ import { EraserTool } from "@/lib/tools/EraserTool";
 import { getElementAtPosition } from "@/lib/math";
 import { publishCursor, publishSelection, publishTool } from "@/lib/collab/presence";
 import type { ToolType } from "@/lib/types";
+import type { TextInput } from "@/components/CanvasTextInput";
 
 // The cursor a tool shows when nothing more specific applies.
 const baseCursorForTool = (tool: ToolType): string => {
@@ -27,7 +28,10 @@ export function useCanvasLogic() {
     // pushing it from an effect keeps the two from fighting over the same state.
     const [cursorOverride, setCursorOverride] = useState<string | null>(null);
     const setCursor = setCursorOverride;
-    const [textInput, setTextInput] = useState<{ x: number; y: number; text: string; id: string } | null>(null);
+    // Which element is being edited and where, but not what it says — the text
+    // itself lives in the store, so a peer typing in the same label is not
+    // fighting a second copy of it. See CanvasTextInput.
+    const [textInput, setTextInput] = useState<TextInput | null>(null);
     const [selectionRect, setSelectionRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
     const [isPanning, setIsPanning] = useState(false);
     const lastMousePos = useRef<{ x: number; y: number } | null>(null);
@@ -222,7 +226,7 @@ export function useCanvasLogic() {
         const hit = getElementAtPosition(x, y, elements);
         if (hit && hit.type === "text") {
             setSelection([]);
-            setTextInput({ x: hit.x, y: hit.y, text: hit.text || "", id: hit.id });
+            setTextInput({ x: hit.x, y: hit.y, id: hit.id });
             return;
         }
 

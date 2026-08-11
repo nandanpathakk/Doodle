@@ -111,7 +111,7 @@ export class TextTool implements Tool {
 
         // World coordinates: CanvasTextInput converts to screen space on render,
         // so the editor stays anchored to the element while panning/zooming.
-        setTextInput({ x: textX, y: textY, text: "", id });
+        setTextInput({ x: textX, y: textY, id });
     }
 
     onMouseMove(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {

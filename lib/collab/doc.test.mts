@@ -185,6 +185,96 @@ console.log("\n# concurrent edits to the same field settle identically");
     check("a real value won, not a merge artefact", xa === 111 || xa === 222, `-> ${xa}`);
 }
 
+console.log("\n# text merges rather than clobbering");
+{
+    const text = (doc: Y.Doc, id = "label") =>
+        (docToElements(getElementsMap(doc)).find((e) => e.id === id)!.text) ?? "";
+
+    const a = new Y.Doc();
+    const b = new Y.Doc();
+    write(a, [el("label", "a0", { type: "text", text: "hello world" })]);
+    Y.applyUpdate(b, Y.encodeStateAsUpdate(a), "net");
+
+    check("text reads back as a plain string", text(a) === "hello world", `-> ${text(a)}`);
+    check("it is stored as a Y.Text, not a string",
+        getElementsMap(a).get("label")!.get("text") instanceof Y.Text);
+
+    // Both type into the same label while disconnected, at different offsets —
+    // exactly the case a whole-string write loses.
+    write(a, [el("label", "a0", { type: "text", text: "hello cruel world" })]);
+    write(b, [el("label", "a0", { type: "text", text: "hello world!" })]);
+    Y.applyUpdate(b, Y.encodeStateAsUpdate(a), "net");
+    Y.applyUpdate(a, Y.encodeStateAsUpdate(b), "net");
+
+    check("both edits survive", text(a) === "hello cruel world!", `-> "${text(a)}"`);
+    check("peers agree", text(a) === text(b), `-> A="${text(a)}" B="${text(b)}"`);
+}
+
+console.log("\n# text edits are diffed, not rewritten");
+{
+    const doc = new Y.Doc();
+    write(doc, [el("label", "a0", { type: "text", text: "the quick brown fox" })]);
+    const yText = getElementsMap(doc).get("label")!.get("text") as Y.Text;
+
+    // Typing one character must not rewrite the line, or every keystroke costs
+    // the length of the paragraph and nothing merges.
+    let bytes = 0;
+    const count = (update: Uint8Array) => { bytes += update.byteLength; };
+    doc.on("update", count);
+    write(doc, [el("label", "a0", { type: "text", text: "the quick brown foxes" })]);
+    doc.off("update", count);
+
+    check("appending a character is a small update", bytes < 60, `-> ${bytes} bytes`);
+    check("the Y.Text was edited in place, not replaced",
+        getElementsMap(doc).get("label")!.get("text") === yText);
+    check("the result is right", yText.toString() === "the quick brown foxes", `-> ${yText}`);
+
+    // An edit in the middle keeps both ends.
+    write(doc, [el("label", "a0", { type: "text", text: "the slow brown foxes" })]);
+    check("replacing a word in the middle", yText.toString() === "the slow brown foxes", `-> ${yText}`);
+
+    write(doc, [el("label", "a0", { type: "text", text: "" })]);
+    check("clearing it works", yText.toString() === "", `-> "${yText}"`);
+}
+
+console.log("\n# text written before it was collaborative");
+{
+    // A document from an older build holds a plain string. It must still read,
+    // and become a Y.Text the first time it is written.
+    const doc = new Y.Doc();
+    const yElements = getElementsMap(doc);
+    doc.transact(() => {
+        const m = new Y.Map<unknown>();
+        for (const [k, v] of Object.entries(el("legacy", "a0", { type: "text", text: "old" }))) {
+            m.set(k, v);
+        }
+        yElements.set("legacy", m);
+    }, LOCAL_ORIGIN);
+
+    check("a plain string still reads",
+        docToElements(yElements)[0].text === "old", `-> ${docToElements(yElements)[0].text}`);
+
+    write(doc, [el("legacy", "a0", { type: "text", text: "old and new" })]);
+    check("writing upgrades it", yElements.get("legacy")!.get("text") instanceof Y.Text);
+    check("without losing anything",
+        docToElements(yElements)[0].text === "old and new", `-> ${docToElements(yElements)[0].text}`);
+}
+
+console.log("\n# emoji are not cut in half");
+{
+    const doc = new Y.Doc();
+    // Astral characters are two UTF-16 code units, and Yjs indexes code units.
+    write(doc, [el("label", "a0", { type: "text", text: "ok 👍" })]);
+    write(doc, [el("label", "a0", { type: "text", text: "ok 👍👍" })]);
+    const out = docToElements(getElementsMap(doc))[0].text!;
+    check("appending one leaves both intact", out === "ok 👍👍", `-> "${out}"`);
+    check("no replacement characters", !out.includes("�"), `-> "${out}"`);
+
+    write(doc, [el("label", "a0", { type: "text", text: "ok 👍" })]);
+    const back = docToElements(getElementsMap(doc))[0].text!;
+    check("and removing one does too", back === "ok 👍", `-> "${back}"`);
+}
+
 console.log(
     failures === 0
         ? `\n${assertions} assertions, all passed\n`

@@ -169,6 +169,36 @@ console.log("\n# undo restores a deleted element");
     dispose();
 }
 
+console.log("\n# undo reaches typing, and stops at a collaborator's typing");
+{
+    const { doc, dispose } = setup();
+
+    asGesture(() => store().addElement(el("t", "a0", { type: "text", text: "" })));
+    // Typing is not bracketed as a gesture; it reaches the document keystroke by
+    // keystroke and the capture timeout groups it into one step.
+    store().updateElement("t", { text: "hi" });
+    store().updateElement("t", { text: "hi there" });
+
+    check("text arrived in the document",
+        (getElementsMap(doc).get("t")!.get("text") as Y.Text).toString() === "hi there");
+
+    // Meanwhile someone else appends to the same label.
+    remoteEdit(doc, (peer) => {
+        (getElementsMap(peer).get("t")!.get("text") as Y.Text).insert(8, "!");
+    });
+    check("their character arrived", byId("t")?.text === "hi there!", `-> ${byId("t")?.text}`);
+
+    store().undo();
+    check("undo removes what we typed", (byId("t")?.text ?? "").includes("hi there") === false,
+        `-> "${byId("t")?.text}"`);
+    check("but leaves theirs", byId("t")?.text === "!", `-> "${byId("t")?.text}"`);
+
+    store().redo();
+    check("redo puts ours back", byId("t")?.text === "hi there!", `-> "${byId("t")?.text}"`);
+
+    dispose();
+}
+
 console.log("\n# restoring a drawing is not itself undoable");
 {
     store().replaceAllElements([]);

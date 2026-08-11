@@ -1,4 +1,5 @@
 import type { AppState, Element, ToolType } from "@/lib/types";
+import type { TextInput } from "@/components/CanvasTextInput";
 
 export interface Tool {
     onMouseDown: (e: React.MouseEvent | React.TouchEvent, context: ToolContext) => void;
@@ -25,6 +26,6 @@ export interface ToolContext {
      */
     beginGesture: () => void;
     commitGesture: () => void;
-    setTextInput: (input: { x: number; y: number; text: string; id: string } | null) => void;
+    setTextInput: (input: TextInput | null) => void;
     setSelectionRect: (rect: { x: number; y: number; width: number; height: number } | null) => void;
 }
