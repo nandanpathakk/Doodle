@@ -41,8 +41,15 @@ export class PencilTool implements Tool {
     onMouseMove(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
         if (!this.currentId) return;
 
-        const { x, y, updateElement, elements } = context;
-        const element = elements.find(el => el.id === this.currentId);
+        const { x, y, updateElement } = context;
+        // Read the store rather than the render-time snapshot in `context`.
+        // This is the one tool that appends to what it already wrote, so a
+        // stale read silently drops points: two pointer moves without a React
+        // commit between them would each append to the same older array and
+        // the first of the two would be lost. Every other tool recomputes from
+        // the start point and the current position, where a stale snapshot
+        // costs nothing.
+        const element = useStore.getState().elements.find(el => el.id === this.currentId);
 
         if (element && element.points) {
             const newPoints = [...element.points, { x, y }];
