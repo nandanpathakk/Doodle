@@ -6,6 +6,7 @@ import {
     docToElements,
     getElementsMap,
 } from "./doc";
+import { draftGeometry } from "@/lib/simplify";
 import { publishDraft } from "./presence";
 
 /**
@@ -63,7 +64,13 @@ export function bindStoreToDoc(doc: Y.Doc): () => void {
         if (isGestureActive()) {
             const touched = getGestureTouchedIds();
             if (touched.size > 0) {
-                publishDraft(state.allElements.filter((el) => touched.has(el.id)));
+                // Thinned before it goes out, or a stroke costs the square of
+                // its length on the wire — see draftGeometry. The store keeps
+                // every point; only the preview peers watch is reduced.
+                publishDraft(draftGeometry(
+                    state.allElements.filter((el) => touched.has(el.id)),
+                    state.appState.zoom,
+                ));
             }
             return;
         }

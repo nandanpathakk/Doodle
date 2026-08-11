@@ -1,4 +1,4 @@
-import type { Point } from "./types.ts";
+import type { Element, Point } from "./types.ts";
 
 /**
  * Ramer–Douglas–Peucker, for pencil strokes.
@@ -96,3 +96,26 @@ const MAX_TOLERANCE_WORLD = 2;
 
 export const strokeTolerance = (zoom: number): number =>
     Math.min(STROKE_TOLERANCE_PX / zoom, MAX_TOLERANCE_WORLD);
+
+/**
+ * The version of an in-flight gesture that goes out over awareness.
+ *
+ * A draft is republished in full on every frame of the gesture, so an
+ * unsimplified stroke costs the square of its own length: at 300 points that
+ * measured 5.4 MB over the wire for a single stroke, most of it points the
+ * previous frame had already sent. Thinning each frame to the same tolerance
+ * the commit will use bounds the payload by the shape rather than by how long
+ * the gesture has been going on.
+ *
+ * Using the *same* tolerance as the commit rather than a coarser one is
+ * deliberate: what peers watch being drawn is then exactly what they end up
+ * with, so the handoff from draft to committed element has nothing to snap to.
+ */
+export const draftGeometry = (elements: Element[], zoom: number): Element[] => {
+    const tolerance = strokeTolerance(zoom);
+    return elements.map((element) =>
+        element.points && element.points.length > 2
+            ? { ...element, points: simplifyPoints(element.points, tolerance) }
+            : element
+    );
+};

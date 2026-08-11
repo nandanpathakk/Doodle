@@ -1,5 +1,5 @@
-import { simplifyPoints, strokeTolerance, STROKE_TOLERANCE_PX } from "./simplify.ts";
-import type { Point } from "./types.ts";
+import { simplifyPoints, strokeTolerance, draftGeometry, STROKE_TOLERANCE_PX } from "./simplify.ts";
+import type { Element, Point } from "./types.ts";
 
 /**
  * Tests for stroke simplification.
@@ -131,6 +131,36 @@ console.log("\n# tolerance for a zoom");
     check("zoomed out it is capped rather than scaling without limit",
         strokeTolerance(0.05) === 2, `got ${strokeTolerance(0.05)}`);
     check("the cap only ever binds below 100%", strokeTolerance(1) < 2);
+}
+
+console.log("\n# drafts published mid-gesture");
+{
+    const el = (over: Partial<Element>): Element => ({
+        id: "e", type: "pencil", x: 0, y: 0, width: 10, height: 10,
+        strokeColor: "#000", backgroundColor: "transparent", strokeWidth: 1,
+        roughness: 1, opacity: 100, seed: 1, index: "a0", updatedAt: 1, version: 1,
+        ...over,
+    });
+
+    const stroke = el({ points: handStroke(300) });
+    const [thinned] = draftGeometry([stroke], 1);
+    check("a stroke is thinned before it goes out",
+        thinned.points!.length < 60, `kept ${thinned.points!.length}`);
+    check("but the element it came from is left alone — the store keeps every point",
+        stroke.points!.length === 300);
+    check("and nothing else about the element changes",
+        thinned.id === stroke.id && thinned.seed === stroke.seed && thinned.x === stroke.x);
+
+    const rect = el({ type: "rectangle", points: undefined });
+    check("an element with no points passes straight through",
+        draftGeometry([rect], 1)[0] === rect);
+
+    const line = el({ type: "line", points: [{ x: 0, y: 0 }, { x: 50, y: 50 }] });
+    check("a two-point line is untouched — there is nothing to drop",
+        draftGeometry([line], 1)[0].points!.length === 2);
+
+    check("zoom is respected, so a magnified gesture streams more detail",
+        draftGeometry([stroke], 8)[0].points!.length > thinned.points!.length);
 }
 
 console.log("\n# degenerate input");

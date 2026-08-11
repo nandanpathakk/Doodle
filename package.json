@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node scripts/run-tests.mjs",
+    "loadtest": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/test-setup.mjs scripts/loadtest.mts",
     "server": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON server/index.ts"
   },
   "dependencies": {
