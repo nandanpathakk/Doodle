@@ -146,6 +146,55 @@ console.log("\n# rooms are ephemeral");
         await until(() => relay.roomCount() === before), `-> ${relay.roomCount()} rooms`);
 }
 
+console.log("\n# the health endpoint");
+{
+    // A host that gets anything other than 200 here decides the service is
+    // unhealthy and restarts it, over and over. Left to itself `ws` answers
+    // plain HTTP with 426, so this endpoint is what makes the thing deployable.
+    const httpUrl = `http://127.0.0.1:${relay.port}`;
+
+    const health = await fetch(`${httpUrl}/healthz`);
+    check("responds 200", health.status === 200, `-> ${health.status}`);
+    const body = await health.json();
+    check("reports ok", body.status === "ok", `-> ${JSON.stringify(body)}`);
+    check("reports a room count, not room contents",
+        typeof body.rooms === "number" && !("names" in body), `-> ${JSON.stringify(body)}`);
+    check("is reachable from a browser on another origin",
+        health.headers.get("access-control-allow-origin") === "*");
+
+    const root = await fetch(httpUrl);
+    check("the root answers too, so a bare URL is a valid ping", root.status === 200);
+
+    const missing = await fetch(`${httpUrl}/nope`);
+    check("anything else is a 404", missing.status === 404, `-> ${missing.status}`);
+
+    // The point of the endpoint is that it does not disturb anything.
+    const before = relay.roomCount();
+    await fetch(`${httpUrl}/healthz`);
+    check("pinging opens no rooms", relay.roomCount() === before);
+}
+
+console.log("\n# a health check does not disturb a live session");
+{
+    const a = connect("room-5");
+    const b = connect("room-5");
+    await until(() => a.provider.wsconnected && b.provider.wsconnected);
+    write(a.doc, [el("before-ping", "a0")]);
+    await until(() => ids(b.doc) === "before-ping");
+
+    // Whatever keeps the host awake must be invisible to the people drawing.
+    for (let i = 0; i < 5; i++) await fetch(`http://127.0.0.1:${relay.port}/healthz`);
+
+    check("peers stay connected", a.provider.wsconnected && b.provider.wsconnected);
+    write(a.doc, [el("before-ping", "a0"), el("after-ping", "a1")]);
+    check("edits still flow",
+        await until(() => ids(b.doc) === "before-ping,after-ping"), `-> ${ids(b.doc)}`);
+
+    a.provider.destroy();
+    b.provider.destroy();
+    await wait(150);
+}
+
 console.log("\n# rooms are isolated from one another");
 {
     const a = connect("alpha");

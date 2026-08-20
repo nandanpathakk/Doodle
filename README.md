@@ -81,8 +81,17 @@ demand, so it needs a host that runs Next.js — Vercel, or `npm run build && np
 start` on any Node host.
 
 **The relay** is a plain Node process that needs somewhere able to hold a
-WebSocket open — a small VM, Fly.io, Render, or similar. Point the app at it
-with `NEXT_PUBLIC_COLLAB_URL=wss://your-relay-host`.
+WebSocket open. [`render.yaml`](render.yaml) deploys it to Render as-is: point
+Render at this repo, and it picks up the blueprint.
+
+Then set `NEXT_PUBLIC_COLLAB_URL=wss://<your-service>.onrender.com` on the app
+and **redeploy it** — that value is baked in at build time, so restarting is not
+enough.
+
+On a free plan the relay is suspended after a spell with nobody using it, and
+the next person to arrive waits while it starts again. Nothing is lost when this
+happens: every browser holds the whole drawing. The app also pings the relay
+while anyone has the page open, which keeps it awake in practice.
 
 Before putting a relay on the public internet: there is no authentication, and
 no encryption beyond your host's TLS. Anyone with a link can edit that room, and

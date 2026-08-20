@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import * as Y from "yjs";
 import * as syncProtocol from "y-protocols/sync";
@@ -147,11 +148,38 @@ const roomNameFromUrl = (url: string | undefined): string => {
     return decodeURIComponent(path.replace(/^\/+/, "")).slice(0, 128);
 };
 
-const server = new WebSocketServer({
-    host: options.host ?? "0.0.0.0",
-    port: options.port ?? 1234,
-    maxPayload: MAX_MESSAGE_BYTES,
+/**
+ * A plain HTTP server alongside the WebSocket one, for two reasons that have
+ * nothing to do with collaboration.
+ *
+ * Hosts want a health check that answers 200. Left to itself, `ws` replies to
+ * any non-upgrade request with 426 Upgrade Required, which a platform reads as
+ * "unhealthy" and restarts in a loop.
+ *
+ * And a free host suspends a service that has been idle, so the first person to
+ * arrive waits out a cold start. A request to `/healthz` is enough to wake one,
+ * which is what `lib/warmRelay.ts` does from the browser.
+ *
+ * Nothing here touches a room, a document, or a connection.
+ */
+const http = createServer((request, response) => {
+    const path = (request.url ?? "/").split("?")[0];
+    if (path === "/healthz" || path === "/") {
+        response.writeHead(200, {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            // So the page can wake this from a browser. The body says nothing
+            // about anyone's drawing — a count, not names or contents.
+            "access-control-allow-origin": "*",
+        });
+        response.end(JSON.stringify({ status: "ok", rooms: rooms.size }));
+        return;
+    }
+    response.writeHead(404, { "content-type": "text/plain" });
+    response.end("not found");
 });
+
+const server = new WebSocketServer({ server: http, maxPayload: MAX_MESSAGE_BYTES });
 
 server.on("connection", (socket, request) => {
     const name = roomNameFromUrl(request.url);
@@ -246,9 +274,9 @@ server.on("connection", (socket, request) => {
 });
 
 return new Promise<Relay>((resolve, reject) => {
-    server.on("error", reject);
-    server.on("listening", () => {
-        const address = server.address();
+    http.on("error", reject);
+    http.listen(options.port ?? 1234, options.host ?? "0.0.0.0", () => {
+        const address = http.address();
         const port = typeof address === "object" && address ? address.port : (options.port ?? 1234);
         resolve({
             port,
@@ -258,7 +286,9 @@ return new Promise<Relay>((resolve, reject) => {
                     rooms.forEach((room) =>
                         room.connections.forEach((_ids, socket) => socket.close(1001, "server shutting down"))
                     );
-                    server.close(() => done());
+                    // The WebSocket server first, so open sockets are released
+                    // before the HTTP server it is attached to goes away.
+                    server.close(() => http.close(() => done()));
                 }),
         });
     });
