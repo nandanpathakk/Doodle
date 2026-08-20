@@ -23,7 +23,12 @@ services:
     healthCheckPath: /healthz
     envVars:
       # The entry point is TypeScript, executed directly by Node's type
-      # stripping. That is unflagged from 22.18; an older default fails with
-      # `Unknown file extension ".ts"`.
+      # stripping, so this cannot be left to Render's default — an older one
+      # fails outright with `Unknown file extension ".ts"`.
+      #
+      # The major only, deliberately: Render resolves the newest 24.x, so
+      # security patches arrive without a commit, while a major version never
+      # changes underneath us. 24 is the LTS line; the odd-numbered lines are
+      # supported for about six months and are not for long-running servers.
       - key: NODE_VERSION
-        value: "22.18.0"
+        value: "24"

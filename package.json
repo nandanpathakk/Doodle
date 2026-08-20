@@ -2,7 +2,7 @@
   "name": "doodle",
   "version": "0.1.0",
   "engines": {
-    "node": ">=22.18"
+    "node": ">=22.18.0 <23.0.0 || >=23.6.0"
   },
   "private": true,
   "scripts": {
