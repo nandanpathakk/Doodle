@@ -133,6 +133,17 @@ export const markNameChosen = (): void => {
 let awareness: Awareness | null = null;
 let localPresence: Presence | null = null;
 
+/**
+ * Whether we are in the room but not yet showing ourselves.
+ *
+ * Someone who has never picked a name is asked for one before they join, and
+ * "before" is meant literally: while this is set nothing is published, so the
+ * room does not briefly acquire a "Warm Ibis" who renames themselves a moment
+ * later. Remote state is still read throughout, which is what lets the dialog
+ * name the room and say who is already there.
+ */
+let held = false;
+
 /** Remote peers only, keyed by client id. Read by the overlay every frame. */
 const remotePeers = new Map<number, Peer>();
 
@@ -269,8 +280,9 @@ const onAwarenessChange = () => readRemoteStates();
  * Attach to a room's awareness. Returns a teardown that also clears local
  * presence, so leaving does not leave a ghost cursor behind for everyone else.
  */
-export function startPresence(a: Awareness): () => void {
+export function startPresence(a: Awareness, { hold = false } = {}): () => void {
     awareness = a;
+    held = hold;
     localPresence = {
         name: getDisplayName(),
         color: colorForClient(a.clientID),
@@ -281,7 +293,7 @@ export function startPresence(a: Awareness): () => void {
         following: null,
         draft: null,
     };
-    a.setLocalStateField("presence", localPresence);
+    if (!held) a.setLocalStateField("presence", localPresence);
     setLocalEntry({
         clientId: a.clientID, name: localPresence.name, color: localPresence.color, following: null,
     });
@@ -292,6 +304,7 @@ export function startPresence(a: Awareness): () => void {
         a.off("change", onAwarenessChange);
         if (pendingPublish !== null) { clearTimeout(pendingPublish); pendingPublish = null; }
         a.setLocalStateField("presence", null);
+        held = false;
         awareness = null;
         localPresence = null;
         setLocalEntry(null);
@@ -320,7 +333,7 @@ const PUBLISH_INTERVAL_MS = 16;
  * position and the withdrawal on leaving always get out.
  */
 const publishSoon = () => {
-    if (!awareness || pendingPublish !== null) return;
+    if (!awareness || held || pendingPublish !== null) return;
     pendingPublish = setTimeout(() => {
         pendingPublish = null;
         if (awareness && localPresence) awareness.setLocalStateField("presence", localPresence);
@@ -363,7 +376,7 @@ export const publishDraft = (draft: Element[] | null): void => {
     localPresence = { ...localPresence, draft };
     if (draft === null) {
         if (pendingPublish !== null) { clearTimeout(pendingPublish); pendingPublish = null; }
-        if (awareness) awareness.setLocalStateField("presence", localPresence);
+        if (awareness && !held) awareness.setLocalStateField("presence", localPresence);
         return;
     }
     publishSoon();
@@ -413,6 +426,21 @@ export const publishFollowing = (clientId: number | null): void => {
     }
     publishSoon();
 };
+
+/**
+ * Show ourselves to the room, once the person has said who they are.
+ *
+ * Everything published while held was collapsed into `localPresence` as it
+ * happened, so this is one write, not a replay.
+ */
+export const releasePresence = (): void => {
+    if (!held) return;
+    held = false;
+    if (awareness && localPresence) awareness.setLocalStateField("presence", localPresence);
+};
+
+/** Whether we are in a room but deliberately not visible in it yet. */
+export const isPresenceHeld = (): boolean => held;
 
 export const isPresenceActive = (): boolean => awareness !== null;
 

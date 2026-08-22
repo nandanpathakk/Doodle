@@ -11,6 +11,7 @@ appearing as they are drawn.
 - **Infinite canvas** with pan and zoom, in a hand-drawn style
 - **Shapes, arrows, freehand, and text**, with colours, stroke styles, and layering
 - **Real-time collaboration** — see each other's cursors, names, and selections
+- **Named rooms**, so a session is recognisable in a tab bar and in a link
 - **Follow someone's view**, so "look at this" does not mean "scroll left a bit"
 - **Works offline.** Edits made with no connection merge when it comes back
 - **Nothing to sign up for.** No account, no server-side storage
@@ -43,11 +44,15 @@ point the app at a different relay with `NEXT_PUBLIC_COLLAB_URL`.
 ## Drawing together
 
 1. Draw something.
-2. Press **Share**. Your drawing is copied into a new room and the URL becomes
-   `/r/<room-id>`. You will be asked what to call yourself — the suggested name
-   is fine if you would rather not.
+2. Press **Collaborate**. Name the room and say what to call yourself — you are
+   asked for your name once, and it is remembered after that. Your drawing is
+   copied into a new room and the URL becomes `/r/<room-id>`.
 3. Copy the invite link and open it elsewhere: another browser, another machine
    on your network, a friend's laptop.
+
+Whoever opens the link is asked for their name before they appear in the room,
+so everyone can tell who is who. Anyone in the room can rename it, from the
+heading of the session panel — the new name reaches everyone.
 
 Leaving a session returns you to your own canvas, untouched. The two are kept
 separate and are never merged.

@@ -3,14 +3,16 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, Copy, LogOut, Share2 } from "lucide-react";
+import { Check, Copy, LogOut, Share2, Users } from "lucide-react";
 import { useStore } from "@/store/useStore";
-import { createRoomId, relayUrl, roomUrl, stashRoomSeed } from "@/lib/collab/session";
+import { createRoomId, relayUrl, roomUrl, stashRoomSeed, stashRoomName } from "@/lib/collab/session";
+import { renameRoom } from "@/lib/collab/useCollab";
 import {
-    getLocalPresence, getRoster, getServerLocalPresence, hasChosenName,
-    markNameChosen, publishName, subscribeToLocalPresence, subscribeToRoster,
+    getDisplayName, getLocalPresence, getRoster, getServerLocalPresence, hasChosenName,
+    publishName, releasePresence, subscribeToLocalPresence, subscribeToRoster,
     type RosterEntry,
 } from "@/lib/collab/presence";
+import { StartSessionDialog, JoinSessionDialog } from "@/components/SessionDialog";
 
 /**
  * Everything to do with a shared session, in one place: starting one, seeing
@@ -66,6 +68,7 @@ export default function SessionBar() {
     // imperatively instead.
     const roomId = useStore((s) => s.roomId);
     const connection = useStore((s) => s.connection);
+    const roomName = useStore((s) => s.roomName);
     const following = useStore((s) => s.followingClientId);
     const setFollowing = useStore((s) => s.setFollowing);
     const router = useRouter();
@@ -79,21 +82,21 @@ export default function SessionBar() {
     const [open, setOpen] = useState(false);
     const [copied, setCopied] = useState(false);
     const [nameDraft, setNameDraft] = useState<string | null>(null);
-    const [focusName, setFocusName] = useState(false);
+    const [roomNameDraft, setRoomNameDraft] = useState<string | null>(null);
 
-    // Ask for a name the first time someone joins a room, by opening the panel
-    // on the name field rather than blocking behind a modal — the generated
-    // name works, so there is nothing here that has to be answered before you
-    // can draw. Adjusting state during render rather than from an effect avoids
-    // rendering the closed panel first and then immediately replacing it.
-    const [promptedFor, setPromptedFor] = useState<string | null>(null);
-    if (roomId && local && promptedFor !== roomId) {
-        setPromptedFor(roomId);
-        if (!hasChosenName()) {
-            setOpen(true);
-            setFocusName(true);
-        }
+    // Whether this person still has to say who they are before the room can see
+    // them. Resolved once per room, during render rather than from an effect so
+    // the canvas is never briefly reachable behind a dialog that is about to
+    // appear. `hasChosenName` reads localStorage, which is why it cannot be an
+    // initialiser: the server render has no answer for it.
+    const [askedFor, setAskedFor] = useState<string | null>(null);
+    const [needsName, setNeedsName] = useState(false);
+    if (roomId && askedFor !== roomId) {
+        setAskedFor(roomId);
+        setNeedsName(!hasChosenName());
     }
+    // Dialog shown from the solo canvas, before a room exists at all.
+    const [starting, setStarting] = useState(false);
 
     useEffect(() => {
         if (!open) return;
@@ -112,22 +115,55 @@ export default function SessionBar() {
     // Starting a session copies the current drawing into a new room. The copy is
     // handed over explicitly, so following someone else's link never pushes this
     // canvas into their room — and this canvas is still here on return.
-    const startSession = () => {
+    const startSession = (newRoomName: string, yourName: string) => {
         const id = createRoomId();
+        // Recorded before navigating, so the room we are about to open finds a
+        // name already chosen and does not ask again on arrival.
+        publishName(yourName);
         stashRoomSeed(id, useStore.getState().elements);
+        if (newRoomName) stashRoomName(id, newRoomName);
+        setStarting(false);
         router.push(`/r/${id}`);
     };
 
     if (!roomId) {
         return (
-            <button
-                onClick={startSession}
-                title="Start a shared session"
-                className="fixed right-4 top-16 z-30 flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 md:bottom-4 md:top-auto dark:border-zinc-800 dark:bg-[#232329] dark:text-zinc-200 dark:hover:bg-zinc-800"
-            >
-                <Share2 size={16} className="text-zinc-500 dark:text-zinc-400" />
-                Share
-            </button>
+            <>
+                <button
+                    onClick={() => setStarting(true)}
+                    title="Draw with other people, live"
+                    className="fixed right-4 top-16 z-30 flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 md:bottom-4 md:top-auto dark:border-zinc-800 dark:bg-[#232329] dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                    <Users size={16} className="text-zinc-500 dark:text-zinc-400" />
+                    Collaborate
+                </button>
+                {starting && (
+                    <StartSessionDialog
+                        // Only offer a name back if it was actually chosen; a
+                        // generated one is what this dialog exists to replace.
+                        initialName={hasChosenName() ? getDisplayName() : ""}
+                        onCancel={() => setStarting(false)}
+                        onStart={startSession}
+                    />
+                )}
+            </>
+        );
+    }
+
+    // Nothing of the room is reachable until this is answered, and presence is
+    // held until it is, so the room does not see this person at all yet.
+    if (needsName) {
+        return (
+            <JoinSessionDialog
+                roomName={roomName}
+                roster={roster}
+                initialName=""
+                onJoin={(yourName) => {
+                    publishName(yourName);
+                    releasePresence();
+                    setNeedsName(false);
+                }}
+            />
         );
     }
 
@@ -151,14 +187,20 @@ export default function SessionBar() {
         }
     };
 
+    // Anyone in the room can rename it, and everyone sees the new name — it is
+    // shared state, like the drawing. Blank clears it back to unnamed rather
+    // than being rejected; a room without a name is a state that already works.
+    const commitRoomName = () => {
+        if (roomNameDraft !== null) renameRoom(roomNameDraft);
+        setRoomNameDraft(null);
+    };
+
+    // Blank is a no-op rather than a way to become nameless: by the time this
+    // field exists a name has already been given, and the room needs one.
     const commitName = () => {
         const trimmed = (nameDraft ?? "").trim();
-        // Keeping the generated name is a choice too, so record it either way or
-        // the prompt reappears on every join.
         if (trimmed) publishName(trimmed);
-        else markNameChosen();
         setNameDraft(null);
-        setFocusName(false);
     };
 
     return (
@@ -219,6 +261,23 @@ export default function SessionBar() {
                     aria-label="Shared session"
                     className="absolute right-0 top-full mt-2 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-2xl md:bottom-full md:top-auto md:mb-2 md:mt-0 dark:border-zinc-800 dark:bg-[#232329]"
                 >
+                    {/* The room's name, editable in place — it is the panel's
+                        heading and its own field at once, so there is no
+                        separate "rename" affordance to go looking for. */}
+                    <input
+                        value={roomNameDraft ?? roomName}
+                        onChange={(e) => setRoomNameDraft(e.target.value)}
+                        onBlur={commitRoomName}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                            if (e.key === "Escape") setRoomNameDraft(null);
+                        }}
+                        placeholder="Untitled room"
+                        maxLength={60}
+                        aria-label="Room name"
+                        className="-mx-1 mb-3 w-[calc(100%+0.5rem)] truncate rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-zinc-800 outline-none transition-colors hover:border-zinc-200 focus:border-indigo-400 dark:text-zinc-100 dark:hover:border-zinc-700"
+                    />
+
                     {/* Said plainly. Edits are not lost, but they are not
                         reaching anyone either, and those are different things. */}
                     {!connected && (
@@ -292,18 +351,12 @@ export default function SessionBar() {
                     <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">
                         Your name
                         <input
-                            autoFocus={focusName}
-                            // Only when we opened this ourselves to ask: the
-                            // generated name is there to be typed over, but
-                            // someone who clicked in to make a small edit should
-                            // keep their caret where they put it.
-                            onFocus={(e) => { if (focusName) e.currentTarget.select(); }}
                             value={nameDraft ?? local?.name ?? ""}
                             onChange={(e) => setNameDraft(e.target.value)}
                             onBlur={commitName}
                             onKeyDown={(e) => {
                                 if (e.key === "Enter") { e.currentTarget.blur(); }
-                                if (e.key === "Escape") { setNameDraft(null); setFocusName(false); }
+                                if (e.key === "Escape") setNameDraft(null);
                             }}
                             maxLength={32}
                             className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm font-normal text-zinc-800 outline-none focus:border-indigo-400 dark:border-zinc-700 dark:bg-[#1e1e24] dark:text-zinc-100"

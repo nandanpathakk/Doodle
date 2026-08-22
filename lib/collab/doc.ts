@@ -184,3 +184,32 @@ export const docToElements = (yElements: YElements): Element[] => {
     yElements.forEach((yEl) => out.push(yEl.toJSON() as Element));
     return sortByIndex(out);
 };
+
+// --- Room metadata ----------------------------------------------------------
+
+export const META_KEY = "meta";
+
+/**
+ * Whatever a room knows about itself. Currently just the name someone gave it.
+ *
+ * A top-level map of its own rather than a key inside the element map, for two
+ * reasons that are easy to miss: the binding observes the element map and would
+ * treat a rename as an element change, pulling the whole drawing back into the
+ * store for it; and the undo manager is scoped to the element map, so a rename
+ * is deliberately out of reach of Ctrl+Z. Renaming the room is not a drawing
+ * edit and should not sit in the same history as one.
+ */
+export const getMetaMap = (doc: Y.Doc): Y.Map<string> => doc.getMap<string>(META_KEY);
+
+const ROOM_NAME_KEY = "roomName";
+
+/** The room's name, or "" when it has none — including before the first sync. */
+export const readRoomName = (doc: Y.Doc): string =>
+    (getMetaMap(doc).get(ROOM_NAME_KEY) ?? "").trim();
+
+/** Set the room's name. Transacts on its own, tagged like every local write. */
+export const writeRoomName = (doc: Y.Doc, name: string): void => {
+    const next = name.trim();
+    if (readRoomName(doc) === next) return;
+    doc.transact(() => getMetaMap(doc).set(ROOM_NAME_KEY, next), LOCAL_ORIGIN);
+};
