@@ -15,8 +15,17 @@ import { startWarmingRelay } from "@/lib/warmRelay";
  */
 export default function DoodleApp({ roomId = null }: { roomId?: string | null }) {
     const isDarkMode = useStore((state) => state.isDarkMode);
+    const roomName = useStore((state) => state.roomName);
 
     useCollab(roomId);
+
+    // The tab is how you find a room again among a dozen others, so it carries
+    // the room's name once the document has one. Set here rather than through
+    // Next's metadata because the name is client-side state that arrives on
+    // sync, not something the server knows when it renders the page.
+    useEffect(() => {
+        document.title = roomName ? `${roomName} · Doodle` : "Doodle";
+    }, [roomName]);
 
     // Unrelated to the above, and deliberately so: a free host suspends an idle
     // service, so this nudges it awake from the moment the page opens rather

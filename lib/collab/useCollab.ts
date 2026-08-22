@@ -8,9 +8,11 @@ import { WebsocketProvider } from "y-websocket";
 import { useStore } from "@/store/useStore";
 import { bindStoreToDoc } from "./binding";
 import { createUndoManager } from "./undo";
-import { getElementsMap, gcDocTombstones, LOCAL_ORIGIN } from "./doc";
+import { getElementsMap, gcDocTombstones, getMetaMap, readRoomName, writeRoomName, LOCAL_ORIGIN } from "./doc";
 import { readLegacyElements, markLegacyImported } from "./legacy";
-import { docNameFor, readRoomSeed, clearRoomSeed, relayUrl } from "./session";
+import {
+    docNameFor, readRoomSeed, clearRoomSeed, readStashedRoomName, clearStashedRoomName, relayUrl,
+} from "./session";
 import { startPresence } from "./presence";
 import { startFollowSync } from "./follow";
 
@@ -23,6 +25,21 @@ import { startFollowSync } from "./follow";
  * — or worse, clear the store — out from under the session that replaced it.
  */
 let activeSession: object | null = null;
+
+/**
+ * The document the current room is bound to.
+ *
+ * Module-level for the same reason presence is: the session owns it, and the
+ * one thing the UI writes that is not an element — the room's name — needs to
+ * reach it without threading a Y.Doc through every component. Null outside a
+ * room, so renaming is simply a no-op on the solo canvas.
+ */
+let activeDoc: Y.Doc | null = null;
+
+/** Rename the room everyone is in. Does nothing outside one. */
+export const renameRoom = (name: string): void => {
+    if (activeDoc) writeRoomName(activeDoc, name);
+};
 
 /**
  * How long to keep saying "Reconnecting…" before admitting the relay is not
@@ -60,6 +77,7 @@ export function useCollab(roomId: string | null = null): void {
         // elements, so its next write removes them from localStorage.
         const legacy = roomId ? [] : readLegacyElements();
         const seed = roomId ? readRoomSeed(roomId) : [];
+        const stashedName = roomId ? readStashedRoomName(roomId) : "";
 
         const doc = new Y.Doc();
         const persistence = new IndexeddbPersistence(docNameFor(roomId), doc);
@@ -70,6 +88,7 @@ export function useCollab(roomId: string | null = null): void {
         let provider: WebsocketProvider | undefined;
         let stopPresence: (() => void) | undefined;
         let stopFollow: (() => void) | undefined;
+        let unobserveMeta: (() => void) | undefined;
         let unreachableTimer: ReturnType<typeof setTimeout> | undefined;
 
         const start = (initial: Element[]) => {
@@ -84,6 +103,22 @@ export function useCollab(roomId: string | null = null): void {
             disposeUndo = createUndoManager(doc);
 
             if (roomId) {
+                // Only whoever started this room has a name stashed for it, and
+                // only if the room has not already been named — a joiner opening
+                // the link must never rename someone else's room.
+                if (stashedName && !readRoomName(doc)) writeRoomName(doc, stashedName);
+
+                // The name lives on the document, so a joiner learns it on the
+                // first sync rather than at mount, and a rename reaches everyone
+                // the same way an element does.
+                activeDoc = doc;
+
+                const meta = getMetaMap(doc);
+                const readName = () => useStore.getState().setRoomName(readRoomName(doc));
+                readName();
+                meta.observe(readName);
+                unobserveMeta = () => meta.unobserve(readName);
+
                 provider = new WebsocketProvider(relayUrl(), roomId, doc, { connect: true });
                 provider.on("status", ({ status }: { status: string }) => {
                     if (cancelled) return;
@@ -134,7 +169,7 @@ export function useCollab(roomId: string | null = null): void {
                 }
                 // Consumed only once it has actually been used, so a discarded
                 // first effect pass in development cannot swallow it.
-                if (roomId) clearRoomSeed(roomId);
+                if (roomId) { clearRoomSeed(roomId); clearStashedRoomName(roomId); }
 
                 // Expire old tombstones once, before binding, so the store never
                 // sees them and the sweep is a single transaction.
@@ -156,6 +191,10 @@ export function useCollab(roomId: string | null = null): void {
             // leave rather than watching a cursor freeze.
             stopFollow?.();
             stopPresence?.();
+            unobserveMeta?.();
+            // Only if a later session has not already claimed it — same hazard
+            // as activeSession above.
+            if (activeDoc === doc) activeDoc = null;
             provider?.destroy();
             disposeUndo?.();
             unbind?.();

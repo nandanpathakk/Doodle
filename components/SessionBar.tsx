@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Check, Copy, LogOut, Share2 } from "lucide-react";
 import { useStore } from "@/store/useStore";
 import { createRoomId, relayUrl, roomUrl, stashRoomSeed } from "@/lib/collab/session";
+import { renameRoom } from "@/lib/collab/useCollab";
 import {
     getLocalPresence, getRoster, getServerLocalPresence, hasChosenName,
     markNameChosen, publishName, subscribeToLocalPresence, subscribeToRoster,
@@ -66,6 +67,7 @@ export default function SessionBar() {
     // imperatively instead.
     const roomId = useStore((s) => s.roomId);
     const connection = useStore((s) => s.connection);
+    const roomName = useStore((s) => s.roomName);
     const following = useStore((s) => s.followingClientId);
     const setFollowing = useStore((s) => s.setFollowing);
     const router = useRouter();
@@ -79,6 +81,7 @@ export default function SessionBar() {
     const [open, setOpen] = useState(false);
     const [copied, setCopied] = useState(false);
     const [nameDraft, setNameDraft] = useState<string | null>(null);
+    const [roomNameDraft, setRoomNameDraft] = useState<string | null>(null);
     const [focusName, setFocusName] = useState(false);
 
     // Ask for a name the first time someone joins a room, by opening the panel
@@ -151,6 +154,14 @@ export default function SessionBar() {
         }
     };
 
+    // Anyone in the room can rename it, and everyone sees the new name — it is
+    // shared state, like the drawing. Blank clears it back to unnamed rather
+    // than being rejected; a room without a name is a state that already works.
+    const commitRoomName = () => {
+        if (roomNameDraft !== null) renameRoom(roomNameDraft);
+        setRoomNameDraft(null);
+    };
+
     const commitName = () => {
         const trimmed = (nameDraft ?? "").trim();
         // Keeping the generated name is a choice too, so record it either way or
@@ -219,6 +230,23 @@ export default function SessionBar() {
                     aria-label="Shared session"
                     className="absolute right-0 top-full mt-2 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-2xl md:bottom-full md:top-auto md:mb-2 md:mt-0 dark:border-zinc-800 dark:bg-[#232329]"
                 >
+                    {/* The room's name, editable in place — it is the panel's
+                        heading and its own field at once, so there is no
+                        separate "rename" affordance to go looking for. */}
+                    <input
+                        value={roomNameDraft ?? roomName}
+                        onChange={(e) => setRoomNameDraft(e.target.value)}
+                        onBlur={commitRoomName}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                            if (e.key === "Escape") setRoomNameDraft(null);
+                        }}
+                        placeholder="Untitled room"
+                        maxLength={60}
+                        aria-label="Room name"
+                        className="-mx-1 mb-3 w-[calc(100%+0.5rem)] truncate rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-zinc-800 outline-none transition-colors hover:border-zinc-200 focus:border-indigo-400 dark:text-zinc-100 dark:hover:border-zinc-700"
+                    />
+
                     {/* Said plainly. Edits are not lost, but they are not
                         reaching anyone either, and those are different things. */}
                     {!connected && (

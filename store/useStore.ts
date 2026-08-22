@@ -120,6 +120,12 @@ interface Store {
     /** Relay connection state. Always "offline" outside a room. */
     connection: ConnectionStatus;
     /**
+     * What this room is called, or "" when it has no name — which includes the
+     * moment before a joiner's first sync, since the name travels on the
+     * document like everything else. Empty outside a room.
+     */
+    roomName: string;
+    /**
      * Peer whose viewport this canvas is mirroring, or null. Set by clicking
      * someone in the session panel; cleared the moment you pan or zoom
      * yourself, which is how you stop.
@@ -129,6 +135,7 @@ interface Store {
     setDocLoaded: (loaded: boolean) => void;
     setSession: (roomId: string | null, connection: ConnectionStatus) => void;
     setConnection: (connection: ConnectionStatus) => void;
+    setRoomName: (roomName: string) => void;
     setFollowing: (clientId: number | null) => void;
     setTool: (tool: ToolType) => void;
     addElement: (element: Element) => void;
@@ -232,6 +239,7 @@ export const useStore = create<Store>()(
             isDocLoaded: false,
             roomId: null,
             connection: "offline",
+            roomName: "",
             followingClientId: null,
             currentStyle: {
                 strokeColor: "#000000",
@@ -247,8 +255,11 @@ export const useStore = create<Store>()(
 
             setDocLoaded: (loaded) => set(() => ({ isDocLoaded: loaded })),
 
-            setSession: (roomId, connection) => set(() => ({ roomId, connection })),
+            // A new session knows nothing about itself yet; the name arrives
+            // from the document once it has loaded or synced.
+            setSession: (roomId, connection) => set(() => ({ roomId, connection, roomName: "" })),
             setConnection: (connection) => set(() => ({ connection })),
+            setRoomName: (roomName) => set(() => ({ roomName })),
             setFollowing: (clientId) => set(() => ({ followingClientId: clientId })),
 
             setTool: (tool) =>

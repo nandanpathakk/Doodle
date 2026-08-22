@@ -15,6 +15,7 @@ import type { Element } from "../types.ts";
  */
 
 const SEED_PREFIX = "doodle-room-seed:";
+const NAME_PREFIX = "doodle-room-name:";
 
 export const createRoomId = (): string => nanoid(12);
 
@@ -59,6 +60,40 @@ export const clearRoomSeed = (roomId: string): void => {
         sessionStorage.removeItem(SEED_PREFIX + roomId);
     } catch {
         // Nothing useful to do; a stale key is harmless once the room has content.
+    }
+};
+
+/**
+ * The name the creator typed for a room they are about to open.
+ *
+ * Handed over the same way as the drawing, and for the same reason: only the
+ * person who started the room has an opinion about what it is called, and
+ * following someone else's link must never rename their room. A joiner has no
+ * stash, so there is nothing for them to apply.
+ *
+ * Read without being consumed, like the seed — see readRoomSeed.
+ */
+export const stashRoomName = (roomId: string, name: string): void => {
+    try {
+        sessionStorage.setItem(NAME_PREFIX + roomId, name);
+    } catch {
+        // The room just starts unnamed, which is a state it already handles.
+    }
+};
+
+export const readStashedRoomName = (roomId: string): string => {
+    try {
+        return sessionStorage.getItem(NAME_PREFIX + roomId) ?? "";
+    } catch {
+        return "";
+    }
+};
+
+export const clearStashedRoomName = (roomId: string): void => {
+    try {
+        sessionStorage.removeItem(NAME_PREFIX + roomId);
+    } catch {
+        // Harmless once the name is on the document.
     }
 };
 
