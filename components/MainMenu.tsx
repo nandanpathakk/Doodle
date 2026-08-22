@@ -27,7 +27,9 @@ export default function MainMenu() {
     const isDarkMode = useStore((s) => s.isDarkMode);
     const setElements = useStore((s) => s.setElements);
     const setSelection = useStore((s) => s.setSelection);
-    const addToHistory = useStore((s) => s.addToHistory);
+
+    // Sharing is not in here. It is the thing people look for, so it has its own
+    // control on the canvas — see SessionBar.
 
     useEffect(() => {
         const onDown = (e: MouseEvent) => {
@@ -43,7 +45,6 @@ export default function MainMenu() {
         if (!file) return;
         try {
             const loaded = await loadFromFile(file);
-            addToHistory();
             setSelection([]);
             setElements(loaded);
         } catch {

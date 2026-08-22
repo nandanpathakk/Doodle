@@ -1,6 +1,7 @@
 import { Tool, ToolContext } from "./Tool";
 import { nanoid } from "nanoid";
-import { Element, ToolType } from "@/lib/types";
+import type { Element, ToolType } from "@/lib/types";
+import { indexOnTop } from "@/lib/order";
 import { useStore } from "@/store/useStore";
 
 export class ShapeTool implements Tool {
@@ -11,13 +12,13 @@ export class ShapeTool implements Tool {
     constructor(private type: ToolType) { }
 
     onMouseDown(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
-        const { x, y, addElement, addToHistory } = context;
+        const { x, y, addElement, beginGesture } = context;
 
         this.startX = x;
         this.startY = y;
         this.currentId = nanoid();
 
-        addToHistory();
+        beginGesture();
 
         const style = useStore.getState().currentStyle;
         const newElement: Element = {
@@ -37,6 +38,8 @@ export class ShapeTool implements Tool {
             edges: style.edges,
             points: (this.type === "line" || this.type === "arrow") ? [{ x, y }] : undefined,
             seed: Math.floor(Math.random() * 2 ** 31),
+            index: indexOnTop(useStore.getState().elements),
+            updatedAt: Date.now(),
             version: 1,
         };
 

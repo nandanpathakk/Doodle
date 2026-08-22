@@ -1,11 +1,18 @@
 import rough from "roughjs";
-import { Element, AppState } from "./types";
+import type { Element, AppState } from "./types";
 import { getStroke } from "perfect-freehand";
 import { getElementBounds } from "./math";
 import { getTextFont, getLineBaseline, TEXT_LINE_HEIGHT } from "./text";
 
-// Shape Cache
-const shapeCache = new Map<string, {
+/**
+ * Generated RoughJS shapes, reused across frames so a drag does not regenerate
+ * the sketchy geometry every pointer move.
+ *
+ * Each canvas needs its own: entries for elements not in the list being drawn
+ * are evicted, so a shared cache would have the scene and overlay layers
+ * continually evicting each other's work.
+ */
+export type ShapeCache = Map<string, {
     version: number;
     shape?: unknown;
     path?: Path2D;
@@ -22,19 +29,46 @@ const shapeCache = new Map<string, {
     relStart?: { x: number, y: number };
     relEnd?: { x: number, y: number };
     text?: string;
-}>();
+}>;
 
+export const createShapeCache = (): ShapeCache => new Map();
+
+const sceneCache: ShapeCache = createShapeCache();
+
+/**
+ * Size a full-viewport canvas's backing store to the device pixel ratio so
+ * drawing stays crisp on HiDPI displays. Shared by the scene and overlay layers
+ * so their coordinate spaces stay identical.
+ */
+export const sizeCanvasToViewport = (canvas: HTMLCanvasElement) => {
+    const dpr = window.devicePixelRatio || 1;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const targetW = Math.floor(w * dpr);
+    const targetH = Math.floor(h * dpr);
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+        canvas.style.width = `${w}px`;
+        canvas.style.height = `${h}px`;
+    }
+};
+
+// Draws the committed drawing and the local selection UI. Transient overlays
+// (the drag-select marquee, and later remote cursors) live on the overlay
+// canvas — see lib/overlay.ts.
 export const renderScene = (
     canvas: HTMLCanvasElement,
     elements: Element[],
     appState: AppState,
-    selectionRect: { x: number; y: number; width: number; height: number } | null | undefined, // Relaxed type
     isDarkMode: boolean,
     editingId: string | null = null,
-    renderOptions?: { dpr?: number; background?: string }
+    renderOptions?: { dpr?: number; background?: string; cache?: ShapeCache }
 ) => {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
+    const shapeCache = renderOptions?.cache ?? sceneCache;
 
     const { zoom, scrollX, scrollY, selection } = appState;
 
@@ -347,17 +381,6 @@ export const renderScene = (
                 ctx.restore();
             }
         }
-    }
-
-    // Draw temporary selection rect (drag to select)
-    if (selectionRect) {
-        ctx.save();
-        ctx.strokeStyle = "#3b82f6";
-        ctx.fillStyle = "rgba(59, 130, 246, 0.1)";
-        ctx.lineWidth = 1 / zoom;
-        ctx.fillRect(selectionRect.x, selectionRect.y, selectionRect.width, selectionRect.height);
-        ctx.strokeRect(selectionRect.x, selectionRect.y, selectionRect.width, selectionRect.height);
-        ctx.restore();
     }
 
     ctx.restore();

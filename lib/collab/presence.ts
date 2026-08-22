@@ -1,0 +1,419 @@
+import type { Awareness } from "y-protocols/awareness";
+import type { Element, ToolType } from "../types.ts";
+
+/**
+ * Presence: who else is here, where their pointer is, and what they have
+ * selected.
+ *
+ * This rides the awareness channel rather than the document, which is the whole
+ * point. Awareness state is ephemeral — never persisted, never part of undo
+ * history, and dropped automatically when a peer disconnects. Cursors move at
+ * ~30Hz per peer; putting that in the document would mean persisting and
+ * versioning mouse movements.
+ *
+ * Remote presence is deliberately kept out of React state. At 30Hz per peer it
+ * would re-render the app hundreds of times a second; instead the overlay
+ * canvas reads it straight from here on its own frame loop. Only the roster —
+ * who is here, and under what name and colour — reaches React, and that changes
+ * only when someone joins, leaves, or renames.
+ */
+
+export interface Viewport {
+    scrollX: number;
+    scrollY: number;
+    zoom: number;
+}
+
+export interface Presence {
+    name: string;
+    color: string;
+    /** Pointer position in world coordinates, or null when off-canvas. */
+    cursor: { x: number; y: number } | null;
+    selection: string[];
+    tool: ToolType;
+    /**
+     * Where this peer is looking. Published so others can follow along; changes
+     * only when someone pans or zooms, so it rides with the rest of presence
+     * rather than needing a channel of its own.
+     */
+    viewport: Viewport | null;
+    /** Whose viewport this peer is mirroring, so we can tell them we are. */
+    following: number | null;
+    /**
+     * Elements being edited right now, before the gesture has been committed to
+     * the document. This is what lets peers watch a shape being dragged out
+     * rather than having it appear when the pointer is released.
+     */
+    draft: Element[] | null;
+}
+
+export interface Peer extends Presence {
+    clientId: number;
+}
+
+/** Who is present, for the avatar list. Changes rarely, so it can live in React. */
+export interface RosterEntry {
+    clientId: number;
+    name: string;
+    color: string;
+    /**
+     * Who this person is following, if anyone. Carried on the roster rather
+     * than read from the peer map because it changes about as often as a name
+     * does, and this is the slice React already subscribes to.
+     */
+    following: number | null;
+}
+
+/**
+ * Distinguishable at a glance and legible against both themes — these are drawn
+ * as small cursors and thin outlines, not large fills.
+ */
+const PEER_COLORS = [
+    "#e03131", "#1971c2", "#2f9e44", "#f08c00",
+    "#9c36b5", "#0c8599", "#e8590c", "#c2255c",
+];
+
+export const colorForClient = (clientId: number): string =>
+    PEER_COLORS[Math.abs(clientId) % PEER_COLORS.length];
+
+const ADJECTIVES = ["Swift", "Quiet", "Bright", "Clever", "Calm", "Bold", "Keen", "Warm"];
+const ANIMALS = ["Otter", "Heron", "Fox", "Ibis", "Marten", "Finch", "Lynx", "Crane"];
+
+const NAME_KEY = "doodle-display-name";
+const NAME_CHOSEN_KEY = "doodle-display-name-chosen";
+
+/** A name to appear under, remembered between sessions. */
+export const getDisplayName = (): string => {
+    try {
+        const stored = localStorage.getItem(NAME_KEY);
+        if (stored) return stored;
+    } catch {
+        // Storage unavailable; fall through to a fresh name.
+    }
+    const name = `${ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]} ${
+        ANIMALS[Math.floor(Math.random() * ANIMALS.length)]
+    }`;
+    setDisplayName(name);
+    return name;
+};
+
+export const setDisplayName = (name: string): void => {
+    try {
+        localStorage.setItem(NAME_KEY, name);
+    } catch {
+        // Not worth failing over; the name just won't persist.
+    }
+};
+
+/**
+ * Whether the name on file was picked by the user or generated for them.
+ *
+ * Kept as its own flag rather than inferred from the stored name, because a
+ * generated name is a perfectly valid thing to choose to keep — and someone who
+ * has decided "Warm Ibis" is fine should not be asked again every time.
+ */
+export const hasChosenName = (): boolean => {
+    try {
+        return localStorage.getItem(NAME_CHOSEN_KEY) === "1";
+    } catch {
+        return true; // cannot remember the answer, so do not keep asking
+    }
+};
+
+export const markNameChosen = (): void => {
+    try {
+        localStorage.setItem(NAME_CHOSEN_KEY, "1");
+    } catch {
+        // Same as above: the prompt just reappears next time.
+    }
+};
+
+// --- Live state -------------------------------------------------------------
+
+let awareness: Awareness | null = null;
+let localPresence: Presence | null = null;
+
+/** Remote peers only, keyed by client id. Read by the overlay every frame. */
+const remotePeers = new Map<number, Peer>();
+
+const rosterListeners = new Set<() => void>();
+let roster: RosterEntry[] = [];
+
+/**
+ * How this client appears to everyone else: same shape as a roster entry, so
+ * the avatar list can show "you" alongside the peers rather than leaving you
+ * out of a room you are in.
+ *
+ * Null outside a room. The object is replaced only when it changes, so it is
+ * safe as a useSyncExternalStore snapshot.
+ */
+const localListeners = new Set<() => void>();
+let localEntry: RosterEntry | null = null;
+
+export const subscribeToLocalPresence = (fn: () => void): (() => void) => {
+    localListeners.add(fn);
+    return () => { localListeners.delete(fn); };
+};
+
+export const getLocalPresence = (): RosterEntry | null => localEntry;
+
+/** Null on the server, where there is no session to be present in. */
+export const getServerLocalPresence = (): RosterEntry | null => null;
+
+const setLocalEntry = (next: RosterEntry | null) => {
+    if (next === null && localEntry === null) return;
+    if (
+        next && localEntry &&
+        next.clientId === localEntry.clientId &&
+        next.name === localEntry.name &&
+        next.color === localEntry.color &&
+        next.following === localEntry.following
+    ) return;
+    localEntry = next;
+    localListeners.forEach((fn) => fn());
+};
+
+/**
+ * Ids of elements peers currently hold in a draft.
+ *
+ * The scene canvas hides these, because the peer's uncommitted version is being
+ * drawn on the overlay — without it, an element being dragged appears twice:
+ * once frozen where the document still has it, once following their pointer.
+ *
+ * Kept separate from the drafts themselves, and only republished when the *set*
+ * changes, so hiding happens at gesture boundaries rather than re-rendering the
+ * scene on every pointer move.
+ */
+const draftIdsListeners = new Set<() => void>();
+let draftIds: string[] = [];
+
+export const subscribeToDraftIds = (fn: () => void): (() => void) => {
+    draftIdsListeners.add(fn);
+    return () => { draftIdsListeners.delete(fn); };
+};
+
+export const getDraftIds = (): string[] => draftIds;
+
+const refreshDraftIds = () => {
+    const next: string[] = [];
+    for (const peer of remotePeers.values()) {
+        if (!peer.draft) continue;
+        for (const element of peer.draft) next.push(element.id);
+    }
+    next.sort();
+    if (next.length === draftIds.length && next.every((id, i) => id === draftIds[i])) return;
+    draftIds = next;
+    draftIdsListeners.forEach((fn) => fn());
+};
+
+export const getRemotePeers = (): Map<number, Peer> => remotePeers;
+
+/**
+ * Any change to any peer — including cursor movement, so this fires often.
+ * Meant for the frame-loop-adjacent things that read peers directly; anything
+ * that would re-render React should use the roster or draft-id subscriptions,
+ * which only fire when their own slice changes.
+ */
+const peerListeners = new Set<() => void>();
+
+export const subscribeToPeers = (fn: () => void): (() => void) => {
+    peerListeners.add(fn);
+    return () => { peerListeners.delete(fn); };
+};
+
+/**
+ * Subscribe to roster changes. Shaped for useSyncExternalStore: the callback is
+ * not invoked on subscribe, and getRoster returns a stable reference that only
+ * changes when the roster genuinely differs.
+ */
+export const subscribeToRoster = (fn: () => void): (() => void) => {
+    rosterListeners.add(fn);
+    return () => { rosterListeners.delete(fn); };
+};
+
+export const getRoster = (): RosterEntry[] => roster;
+
+const sameRoster = (a: RosterEntry[], b: RosterEntry[]) =>
+    a.length === b.length &&
+    a.every((entry, i) =>
+        entry.clientId === b[i].clientId && entry.name === b[i].name &&
+        entry.color === b[i].color && entry.following === b[i].following);
+
+/** Recompute the roster, notifying only when it actually differs. */
+const refreshRoster = () => {
+    const next = [...remotePeers.values()]
+        .map(({ clientId, name, color, following }) => ({ clientId, name, color, following: following ?? null }))
+        .sort((a, b) => a.clientId - b.clientId);
+    if (sameRoster(next, roster)) return;
+    roster = next;
+    rosterListeners.forEach((fn) => fn());
+};
+
+const readRemoteStates = () => {
+    if (!awareness) return;
+    remotePeers.clear();
+    awareness.getStates().forEach((state, clientId) => {
+        if (clientId === awareness!.clientID) return;
+        const presence = (state as { presence?: Presence }).presence;
+        if (!presence) return;
+        remotePeers.set(clientId, { ...presence, clientId });
+    });
+    refreshRoster();
+    refreshDraftIds();
+    peerListeners.forEach((fn) => fn());
+};
+
+const onAwarenessChange = () => readRemoteStates();
+
+/**
+ * Attach to a room's awareness. Returns a teardown that also clears local
+ * presence, so leaving does not leave a ghost cursor behind for everyone else.
+ */
+export function startPresence(a: Awareness): () => void {
+    awareness = a;
+    localPresence = {
+        name: getDisplayName(),
+        color: colorForClient(a.clientID),
+        cursor: null,
+        selection: [],
+        tool: "selection",
+        viewport: null,
+        following: null,
+        draft: null,
+    };
+    a.setLocalStateField("presence", localPresence);
+    setLocalEntry({
+        clientId: a.clientID, name: localPresence.name, color: localPresence.color, following: null,
+    });
+    a.on("change", onAwarenessChange);
+    readRemoteStates();
+
+    return () => {
+        a.off("change", onAwarenessChange);
+        if (pendingPublish !== null) { clearTimeout(pendingPublish); pendingPublish = null; }
+        a.setLocalStateField("presence", null);
+        awareness = null;
+        localPresence = null;
+        setLocalEntry(null);
+        remotePeers.clear();
+        refreshRoster();
+        refreshDraftIds();
+    };
+}
+
+// --- Publishing -------------------------------------------------------------
+
+let pendingPublish: ReturnType<typeof setTimeout> | null = null;
+
+/** Roughly one animation frame — enough to collapse a burst of pointer events. */
+const PUBLISH_INTERVAL_MS = 16;
+
+/**
+ * Publish at most once per frame's worth of time. Pointer events arrive faster
+ * than anyone can see, and there is no value in sending a position nobody will
+ * draw.
+ *
+ * Deliberately a timer rather than requestAnimationFrame: rAF does not run in a
+ * hidden tab, so switching away mid-move would strand the pending publish and
+ * peers would keep seeing a cursor that has actually gone. Timers still fire
+ * when hidden (throttled, which is fine — nobody is watching), so the last
+ * position and the withdrawal on leaving always get out.
+ */
+const publishSoon = () => {
+    if (!awareness || pendingPublish !== null) return;
+    pendingPublish = setTimeout(() => {
+        pendingPublish = null;
+        if (awareness && localPresence) awareness.setLocalStateField("presence", localPresence);
+    }, PUBLISH_INTERVAL_MS);
+};
+
+export const publishCursor = (cursor: { x: number; y: number } | null): void => {
+    if (!localPresence) return;
+    const current = localPresence.cursor;
+    if (current === cursor) return;
+    if (current && cursor && current.x === cursor.x && current.y === cursor.y) return;
+    localPresence = { ...localPresence, cursor };
+    publishSoon();
+};
+
+export const publishSelection = (selection: string[]): void => {
+    if (!localPresence) return;
+    const current = localPresence.selection;
+    if (current.length === selection.length && current.every((id, i) => id === selection[i])) return;
+    localPresence = { ...localPresence, selection };
+    publishSoon();
+};
+
+export const publishTool = (tool: ToolType): void => {
+    if (!localPresence || localPresence.tool === tool) return;
+    localPresence = { ...localPresence, tool };
+    publishSoon();
+};
+
+/**
+ * Stream the elements of an in-flight gesture, or null to clear.
+ *
+ * Published immediately rather than through the coalescer when clearing, so the
+ * draft disappears the moment the real element arrives instead of lingering for
+ * a frame as a duplicate.
+ */
+export const publishDraft = (draft: Element[] | null): void => {
+    if (!localPresence) return;
+    if (localPresence.draft === null && draft === null) return;
+    localPresence = { ...localPresence, draft };
+    if (draft === null) {
+        if (pendingPublish !== null) { clearTimeout(pendingPublish); pendingPublish = null; }
+        if (awareness) awareness.setLocalStateField("presence", localPresence);
+        return;
+    }
+    publishSoon();
+};
+
+/**
+ * Publish where we are looking. Coalesced like the rest, though panning already
+ * arrives far slower than a cursor does.
+ */
+export const publishViewport = (viewport: Viewport | null): void => {
+    if (!localPresence) return;
+    const current = localPresence.viewport;
+    if (current === viewport) return;
+    if (
+        current && viewport &&
+        current.scrollX === viewport.scrollX &&
+        current.scrollY === viewport.scrollY &&
+        current.zoom === viewport.zoom
+    ) return;
+    localPresence = { ...localPresence, viewport };
+    publishSoon();
+};
+
+export const publishName = (name: string): void => {
+    setDisplayName(name);
+    markNameChosen();
+    if (!localPresence || localPresence.name === name) return;
+    localPresence = { ...localPresence, name };
+    if (awareness) {
+        setLocalEntry({
+            clientId: awareness.clientID, name,
+            color: localPresence.color, following: localPresence.following,
+        });
+    }
+    publishSoon();
+};
+
+/** Tell the room whose viewport we are mirroring, so they can be told. */
+export const publishFollowing = (clientId: number | null): void => {
+    if (!localPresence || localPresence.following === clientId) return;
+    localPresence = { ...localPresence, following: clientId };
+    if (awareness) {
+        setLocalEntry({
+            clientId: awareness.clientID, name: localPresence.name,
+            color: localPresence.color, following: clientId,
+        });
+    }
+    publishSoon();
+};
+
+export const isPresenceActive = (): boolean => awareness !== null;
+
+

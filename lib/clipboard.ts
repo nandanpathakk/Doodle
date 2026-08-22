@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { Element } from "./types";
+import type { Element } from "./types";
 
 // In-app clipboard. Kept in module scope so it survives re-renders but not reloads.
 let clipboard: Element[] = [];
@@ -38,6 +38,9 @@ export const cloneElements = (
             y: el.y + dy,
             points: el.points ? el.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) : undefined,
             groupId,
+            // A copy is a new element: never inherit the source's tombstone.
+            isDeleted: false,
+            updatedAt: Date.now(),
             version: 1,
         };
     });

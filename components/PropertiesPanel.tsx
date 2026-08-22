@@ -5,7 +5,7 @@ import { useStore } from "@/store/useStore";
 import { cn } from "@/lib/utils";
 import { Paintbrush, MousePointer2 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
-import { Element, ToolType } from "@/lib/types";
+import type { Element, ToolType } from "@/lib/types";
 import { measureTextBlock } from "@/lib/text";
 
 const colors = [
@@ -264,7 +264,7 @@ function BackgroundSection({
 }
 
 export default function PropertiesPanel() {
-    const { elements, appState, updateElement, isDarkMode, currentStyle, setCurrentStyle, addToHistory } = useStore();
+    const { elements, appState, updateElement, isDarkMode, currentStyle, setCurrentStyle, beginGesture } = useStore();
 
     const [activeMobilePanel, setActiveMobilePanel] = useState<"stroke" | "background" | null>(null);
     const [isMobile, setIsMobile] = useState(false);
@@ -282,13 +282,16 @@ export default function PropertiesPanel() {
         return () => window.removeEventListener("resize", checkMobile);
     }, []);
 
-    useEffect(() => {
-        if (appState.selection.length === 0) {
-            setActiveMobilePanel(null);
-        }
-    }, [appState.selection]);
-
     const hasSelection = appState.selection.length > 0;
+
+    // Deselecting closes any open mobile sub-panel. Adjusting state during
+    // render (React's documented pattern) instead of in an effect, so the panel
+    // never paints once in the stale state before closing.
+    const [prevHasSelection, setPrevHasSelection] = useState(hasSelection);
+    if (prevHasSelection !== hasSelection) {
+        setPrevHasSelection(hasSelection);
+        if (!hasSelection) setActiveMobilePanel(null);
+    }
     const editingDefaults = !hasSelection;
 
     // Show the panel when something is selected OR a drawing tool is active (to set defaults).
@@ -302,9 +305,10 @@ export default function PropertiesPanel() {
 
     if (!element) return null;
 
-    // Snapshot history once at the start of an edit gesture (so a slider drag is one undo step).
+    // Open a gesture at the start of an edit, so a slider sweep is one undo step.
+    // It is closed centrally on pointer release (see useCanvasLogic).
     const handleBegin = () => {
-        if (hasSelection) addToHistory();
+        if (hasSelection) beginGesture();
     };
 
     const handleChange = (key: string, value: unknown) => {

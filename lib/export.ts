@@ -1,4 +1,4 @@
-import { Element, AppState } from "./types";
+import type { Element, AppState } from "./types";
 import { getSelectionBounds } from "./math";
 import { renderScene } from "./render";
 
@@ -36,7 +36,7 @@ function renderToContentCanvas(
     };
 
     // dpr: 1 because we bake the scale into zoom and size the canvas ourselves.
-    renderScene(canvas, elements, appState, null, isDarkMode, null, { dpr: 1, background });
+    renderScene(canvas, elements, appState, isDarkMode, null, { dpr: 1, background });
     return canvas;
 }
 

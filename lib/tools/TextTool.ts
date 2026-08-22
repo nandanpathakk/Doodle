@@ -1,12 +1,13 @@
 import { Tool, ToolContext } from "./Tool";
 import { nanoid } from "nanoid";
-import { Element } from "@/lib/types";
+import type { Element } from "@/lib/types";
 import { getElementAtPosition, isPointOnBorder } from "@/lib/math";
+import { indexOnTop } from "@/lib/order";
 import { useStore } from "@/store/useStore";
 
 export class TextTool implements Tool {
     onMouseDown(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
-        const { x, y, addElement, setTextInput, elements, addToHistory } = context;
+        const { x, y, addElement, setTextInput, elements, beginGesture } = context;
 
         let clientX, clientY;
         if ('touches' in e) {
@@ -100,15 +101,17 @@ export class TextTool implements Tool {
             textBaseline,
             containerElementId,
             onContainerBorder,
+            index: indexOnTop(elements),
+            updatedAt: Date.now(),
             version: 1,
         };
 
-        addToHistory();
+        beginGesture();
         addElement(newElement);
 
         // World coordinates: CanvasTextInput converts to screen space on render,
         // so the editor stays anchored to the element while panning/zooming.
-        setTextInput({ x: textX, y: textY, text: "", id });
+        setTextInput({ x: textX, y: textY, id });
     }
 
     onMouseMove(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {

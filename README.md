@@ -1,36 +1,104 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Doodle
 
-## Getting Started
+A hand-drawn-style whiteboard you can share with a link.
 
-First, run the development server:
+Sketch boxes, arrows, and freehand strokes on an infinite canvas. Send someone
+the link and you are both drawing on it — cursors, selections, and shapes
+appearing as they are drawn.
+
+## Features
+
+- **Infinite canvas** with pan and zoom, in a hand-drawn style
+- **Shapes, arrows, freehand, and text**, with colours, stroke styles, and layering
+- **Real-time collaboration** — see each other's cursors, names, and selections
+- **Follow someone's view**, so "look at this" does not mean "scroll left a bit"
+- **Works offline.** Edits made with no connection merge when it comes back
+- **Nothing to sign up for.** No account, no server-side storage
+- **Export** to PNG, or save and reopen a `.doodle` file
+
+## Getting started
+
+```bash
+npm install
+```
+
+**Run the app:**
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000. Everything except shared sessions works with just
+this.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**Run the relay** — only needed for shared sessions. In a second terminal:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run server
+```
 
-## Learn More
+It listens on `ws://localhost:1234`. Set `PORT` or `HOST` to change that, and
+point the app at a different relay with `NEXT_PUBLIC_COLLAB_URL`.
 
-To learn more about Next.js, take a look at the following resources:
+## Drawing together
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Draw something.
+2. Press **Share**. Your drawing is copied into a new room and the URL becomes
+   `/r/<room-id>`. You will be asked what to call yourself — the suggested name
+   is fine if you would rather not.
+3. Copy the invite link and open it elsewhere: another browser, another machine
+   on your network, a friend's laptop.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Leaving a session returns you to your own canvas, untouched. The two are kept
+separate and are never merged.
 
-## Deploy on Vercel
+## Your drawings
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+They live in your browser and nowhere else. There is no database and no
+account, and nothing is uploaded to be stored. Clearing site data erases them;
+a different browser starts empty.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Rooms are temporary. The relay passes messages between people and keeps a room
+in memory only while someone is connected — it writes nothing to disk. Anyone
+with a room link can view and edit it; there is no password.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Run the app in development |
+| `npm run server` | Run the collaboration relay |
+| `npm run build` | Production build |
+| `npm start` | Serve the production build |
+| `npm test` | Run the test suites |
+| `npm run loadtest` | Measure a heavy room: bandwidth, sync times |
+| `npm run lint` | Lint |
+
+## Deploying
+
+**The app** is a Next.js build. `/` is prerendered but room URLs are rendered on
+demand, so it needs a host that runs Next.js — Vercel, or `npm run build && npm
+start` on any Node host.
+
+**The relay** is a plain Node process that needs somewhere able to hold a
+WebSocket open. [`render.yaml`](render.yaml) deploys it to Render as-is: point
+Render at this repo, and it picks up the blueprint.
+
+Then set `NEXT_PUBLIC_COLLAB_URL=wss://<your-service>.onrender.com` on the app
+and **redeploy it** — that value is baked in at build time, so restarting is not
+enough.
+
+On a free plan the relay is suspended after a spell with nobody using it, and
+the next person to arrive waits while it starts again. Nothing is lost when this
+happens: every browser holds the whole drawing. The app also pings the relay
+while anyone has the page open, which keeps it awake in practice.
+
+Before putting a relay on the public internet: there is no authentication, and
+no encryption beyond your host's TLS. Anyone with a link can edit that room, and
+whoever runs the relay can see its contents.
+
+## Built with
+
+Next.js, React, TypeScript, Zustand, [RoughJS](https://roughjs.com),
+[perfect-freehand](https://github.com/steveruizok/perfect-freehand), and
+[Yjs](https://github.com/yjs/yjs) for the collaborative editing.

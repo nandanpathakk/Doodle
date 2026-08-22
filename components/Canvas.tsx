@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useStore } from "@/store/useStore";
-import { renderScene } from "@/lib/render";
+import { renderScene, sizeCanvasToViewport } from "@/lib/render";
 import { useCanvasLogic } from "@/hooks/useCanvasLogic";
+import OverlayCanvas from "./OverlayCanvas";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { getElementAtPosition } from "@/lib/math";
+import { subscribeToDraftIds, getDraftIds } from "@/lib/collab/presence";
 import CanvasTextInput from "./CanvasTextInput";
 import WelcomeScreen from "./WelcomeScreen";
 import ZoomIndicator from "./ZoomIndicator";
@@ -18,9 +20,21 @@ export default function Canvas() {
     const elements = useStore((s) => s.elements);
     const appState = useStore((s) => s.appState);
     const isDarkMode = useStore((s) => s.isDarkMode);
+    const isDocLoaded = useStore((s) => s.isDocLoaded);
     const setSelection = useStore((s) => s.setSelection);
     const setZoom = useStore((s) => s.setZoom);
     const setScroll = useStore((s) => s.setScroll);
+    // Elements a peer is mid-gesture on are hidden here and drawn on the overlay
+    // instead, so a shape being dragged does not also sit frozen where the
+    // document still has it. This list only changes at gesture boundaries, so it
+    // costs one re-render per gesture rather than one per pointer move.
+    const peerDraftIds = useSyncExternalStore(subscribeToDraftIds, getDraftIds, getDraftIds);
+    const visibleElements = useMemo(() => {
+        if (peerDraftIds.length === 0) return elements;
+        const hidden = new Set(peerDraftIds);
+        return elements.filter((el) => !hidden.has(el.id));
+    }, [elements, peerDraftIds]);
+
     const [fontsReady, setFontsReady] = useState(false);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const frameRef = useRef<number | undefined>(undefined);
@@ -33,6 +47,7 @@ export default function Canvas() {
         handleMouseDown,
         handleMouseMove,
         handleMouseUp,
+        handleMouseLeave,
         handleDoubleClick,
         handleTouchStart,
         handleTouchMove,
@@ -48,47 +63,34 @@ export default function Canvas() {
         fonts.ready.then(() => setFontsReady(true));
     }, []);
 
-    // Size the canvas backing store to the device pixel ratio so drawings stay crisp on HiDPI/Retina displays.
-    const sizeCanvas = (canvas: HTMLCanvasElement) => {
-        const dpr = window.devicePixelRatio || 1;
-        const w = window.innerWidth;
-        const h = window.innerHeight;
-        const targetW = Math.floor(w * dpr);
-        const targetH = Math.floor(h * dpr);
-        if (canvas.width !== targetW || canvas.height !== targetH) {
-            canvas.width = targetW;
-            canvas.height = targetH;
-            canvas.style.width = `${w}px`;
-            canvas.style.height = `${h}px`;
-        }
-    };
-
     // Coalesce draws to one per animation frame, so a burst of store updates
     // (e.g. dragging many elements) results in a single vsync-aligned render.
+    // Note `selectionRect` is absent from the dependencies: the marquee lives on
+    // the overlay canvas, so dragging one no longer repaints the whole scene.
     useLayoutEffect(() => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
         frameRef.current = requestAnimationFrame(() => {
-            sizeCanvas(canvas);
-            renderScene(canvas, elements, appState, selectionRect, isDarkMode, textInput?.id);
+            sizeCanvasToViewport(canvas);
+            renderScene(canvas, visibleElements, appState, isDarkMode, textInput?.id);
         });
         return () => {
             if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
         };
-    }, [elements, appState, selectionRect, isDarkMode, textInput, fontsReady]);
+    }, [visibleElements, appState, isDarkMode, textInput, fontsReady]);
 
     useEffect(() => {
         const handleResize = () => {
             const canvas = canvasRef.current;
             if (canvas) {
-                sizeCanvas(canvas);
-                renderScene(canvas, elements, appState, selectionRect, isDarkMode, textInput?.id);
+                sizeCanvasToViewport(canvas);
+                renderScene(canvas, visibleElements, appState, isDarkMode, textInput?.id);
             }
         };
         window.addEventListener("resize", handleResize);
         return () => window.removeEventListener("resize", handleResize);
-    }, [elements, appState, selectionRect, isDarkMode, textInput]);
+    }, [visibleElements, appState, isDarkMode, textInput]);
 
     // Add non-passive wheel listener to prevent browser zoom
     useEffect(() => {
@@ -158,6 +160,7 @@ export default function Canvas() {
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseLeave}
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
@@ -169,13 +172,16 @@ export default function Canvas() {
             >
                 Canvas not supported
             </canvas>
+            <OverlayCanvas selectionRect={selectionRect} />
             {textInput && (
                 <CanvasTextInput textInput={textInput} setTextInput={setTextInput} />
             )}
             {contextMenu && (
                 <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
             )}
-            {elements.length === 0 && <WelcomeScreen />}
+            {/* A peer drawing into an empty canvas counts as content, or the
+                welcome copy sits behind their in-flight shape. */}
+            {isDocLoaded && elements.length === 0 && peerDraftIds.length === 0 && <WelcomeScreen />}
             <ZoomIndicator />
         </>
     );

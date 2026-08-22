@@ -1,18 +1,41 @@
 import { useStore } from "@/store/useStore";
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { measureTextBlock, TEXT_FONT_FAMILY, TEXT_LINE_HEIGHT } from "@/lib/text";
 
-interface CanvasTextInputProps {
+export interface TextInput {
     // x/y are world coordinates; converted to screen space here so the editor
     // stays anchored to the element across pan/zoom.
-    textInput: { x: number; y: number; text: string; id: string };
-    setTextInput: (input: { x: number; y: number; text: string; id: string } | null) => void;
+    x: number;
+    y: number;
+    id: string;
 }
 
+interface CanvasTextInputProps {
+    textInput: TextInput;
+    setTextInput: (input: TextInput | null) => void;
+}
+
+/**
+ * The text editor is a real `<textarea>` positioned over the canvas, so it
+ * comes with a caret, selection, and IME for free.
+ *
+ * Its value is the element's text **in the store**, not a copy held here. That
+ * matters in a session: a peer typing in the same label reaches the store
+ * through the document, and an editor holding its own copy would overwrite
+ * them on the next keystroke — the merge in `doc.ts` would be undone one
+ * character at a time by the very thing it exists to protect.
+ */
 export default function CanvasTextInput({ textInput, setTextInput }: CanvasTextInputProps) {
     const { updateElement, removeElement } = useStore();
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const canvasRef = useRef<HTMLCanvasElement>(null); // Dummy canvas for text measurement if needed, or use existing context logic
+
+    const storeElement = useStore(state => state.elements.find(el => el.id === textInput.id));
+    const zoom = useStore(state => state.appState.zoom);
+    const scrollX = useStore(state => state.appState.scrollX);
+    const scrollY = useStore(state => state.appState.scrollY);
+    const isDarkMode = useStore(state => state.isDarkMode);
+
+    const text = storeElement?.text ?? "";
 
     useEffect(() => {
         // Programmatically focus on mount to ensure it captures input
@@ -22,35 +45,61 @@ export default function CanvasTextInput({ textInput, setTextInput }: CanvasTextI
         return () => clearTimeout(timeout);
     }, []);
 
-    const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-        const text = e.target.value;
-        const textarea = e.target;
-
-        // Auto-grow
+    const grow = (textarea: HTMLTextAreaElement) => {
         textarea.style.height = "auto";
         textarea.style.height = textarea.scrollHeight + "px";
+    };
 
-        setTextInput({ ...textInput, text });
+    const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        const next = e.target.value;
+        grow(e.target);
 
         // Keep the element's box in sync with its content (world units).
-        const fs = useStore.getState().elements.find(el => el.id === textInput.id)?.fontSize ?? 20;
-        const { width, height } = measureTextBlock(text, fs);
-        updateElement(textInput.id, { text, width, height });
+        const fs = storeElement?.fontSize ?? 20;
+        const { width, height } = measureTextBlock(next, fs);
+        updateElement(textInput.id, { text: next, width, height });
     };
+
+    /**
+     * Bring the textarea up to date with text that arrived from someone else.
+     *
+     * This is why the textarea is uncontrolled. Handing React the value would
+     * have it assign `node.value` on every remote keystroke, and assigning
+     * `value` drops the caret at the end of the text — so a peer typing
+     * anywhere in the label would keep throwing you to the end of it. Splicing
+     * in only what changed and letting the browser adjust the selection itself
+     * ("preserve") is the one way to keep the caret where the user put it.
+     *
+     * Comparing against the DOM rather than a remembered value means our own
+     * keystrokes are already a no-op here: the textarea had them first.
+     */
+    useLayoutEffect(() => {
+        const textarea = textareaRef.current;
+        if (!textarea || textarea.value === text) return;
+
+        const current = textarea.value;
+        const max = Math.min(current.length, text.length);
+        let prefix = 0;
+        while (prefix < max && current[prefix] === text[prefix]) prefix++;
+        let suffix = 0;
+        while (
+            suffix < max - prefix &&
+            current[current.length - 1 - suffix] === text[text.length - 1 - suffix]
+        ) suffix++;
+
+        textarea.setRangeText(
+            text.slice(prefix, text.length - suffix), prefix, current.length - suffix, "preserve"
+        );
+        grow(textarea);
+    }, [text]);
 
     const handleTextBlur = () => {
         // Don't leave invisible, hit-testable ghost elements behind.
-        if (!textInput.text.trim()) {
+        if (!text.trim()) {
             removeElement(textInput.id);
         }
         setTextInput(null);
     };
-
-    const storeElement = useStore(state => state.elements.find(el => el.id === textInput.id));
-    const zoom = useStore(state => state.appState.zoom);
-    const scrollX = useStore(state => state.appState.scrollX);
-    const scrollY = useStore(state => state.appState.scrollY);
-    const isDarkMode = useStore(state => state.isDarkMode);
 
     const textAlign: "left" | "center" | "right" = storeElement?.textAlign || "left";
 
@@ -73,8 +122,8 @@ export default function CanvasTextInput({ textInput, setTextInput }: CanvasTextI
     // Measure text width precisely to avoid jumps
     // We use useMemo to calculate this whenever text or zoom changes
     const measuredWidth = useMemo(
-        () => measureTextBlock(textInput.text, fontSize).width,
-        [textInput.text, fontSize]
+        () => measureTextBlock(text, fontSize).width,
+        [text, fontSize]
     );
 
     return (
@@ -95,7 +144,10 @@ export default function CanvasTextInput({ textInput, setTextInput }: CanvasTextI
                 margin: "0px",
                 color: editorColor,
             }}
-            value={textInput.text}
+            // Uncontrolled on purpose — see the layout effect above. The store
+            // is still the source of truth; it just reaches the DOM by splice
+            // rather than by assignment, so the caret survives.
+            defaultValue={text}
             onChange={handleTextChange}
             onBlur={handleTextBlur}
             placeholder="Type here..."

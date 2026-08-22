@@ -7,12 +7,31 @@ import { TextTool } from "@/lib/tools/TextTool";
 import { SelectionTool } from "@/lib/tools/SelectionTool";
 import { EraserTool } from "@/lib/tools/EraserTool";
 import { getElementAtPosition } from "@/lib/math";
-import { ToolType } from "@/lib/types";
+import { publishCursor, publishSelection, publishTool } from "@/lib/collab/presence";
+import type { ToolType } from "@/lib/types";
+import type { TextInput } from "@/components/CanvasTextInput";
+
+// The cursor a tool shows when nothing more specific applies.
+const baseCursorForTool = (tool: ToolType): string => {
+    switch (tool) {
+        case "hand": return "grab";
+        case "text": return "text";
+        case "selection": return "default";
+        default: return "crosshair"; // drawing tools and the eraser
+    }
+};
 
 export function useCanvasLogic() {
-    const { elements, appState, addElement, updateElement, removeElement, setSelection, addToHistory, setElements, setZoom, setScroll, setTool } = useStore();
-    const [cursor, setCursor] = useState("default");
-    const [textInput, setTextInput] = useState<{ x: number; y: number; text: string; id: string } | null>(null);
+    const { elements, appState, addElement, updateElement, removeElement, setSelection, beginGesture, commitGesture, setElements, setZoom, setScroll, setTool } = useStore();
+    // Cursor is the tool's base, unless something transient (hover over a resize
+    // handle, panning, holding Space) overrides it. Deriving the base rather than
+    // pushing it from an effect keeps the two from fighting over the same state.
+    const [cursorOverride, setCursorOverride] = useState<string | null>(null);
+    const setCursor = setCursorOverride;
+    // Which element is being edited and where, but not what it says — the text
+    // itself lives in the store, so a peer typing in the same label is not
+    // fighting a second copy of it. See CanvasTextInput.
+    const [textInput, setTextInput] = useState<TextInput | null>(null);
     const [selectionRect, setSelectionRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
     const [isPanning, setIsPanning] = useState(false);
     const lastMousePos = useRef<{ x: number; y: number } | null>(null);
@@ -49,7 +68,9 @@ export function useCanvasLogic() {
         const onKeyUp = (e: KeyboardEvent) => {
             if (e.code === "Space") {
                 spaceDown.current = false;
-                setCursor("default");
+                // Fall back to the active tool rather than forcing an arrow —
+                // releasing Space over a drawing tool should restore its crosshair.
+                setCursorOverride(null);
             }
         };
         window.addEventListener("keydown", onKeyDown);
@@ -60,16 +81,44 @@ export function useCanvasLogic() {
         };
     }, []);
 
-    // Base cursor for the active tool (drawing tools show a crosshair).
+    // A gesture is bounded by a single pointer press, enforced from both ends.
+    //
+    // On release: window handlers run after React's, so a tool's own onMouseUp is
+    // still inside the gesture, and a release outside the canvas still closes it.
+    //
+    // On press (capture phase, before any React handler): close anything left
+    // open. Some edits open a gesture from a handler that fires *after* release —
+    // onClick on a colour swatch, dblclick creating a text element — and without
+    // this the stale gesture would swallow the next edit's history snapshot.
     useEffect(() => {
-        if (spaceDown.current) return;
-        const t = appState.tool;
-        if (t === "hand") setCursor("grab");
-        else if (t === "text") setCursor("text");
-        else if (t === "selection") setCursor("default");
-        else if (t === "eraser") setCursor("crosshair");
-        else setCursor("crosshair");
-    }, [appState.tool]);
+        const end = () => commitGesture();
+        const onRelease = ["mouseup", "touchend", "touchcancel", "pointercancel", "blur"];
+        onRelease.forEach((ev) => window.addEventListener(ev, end));
+        window.addEventListener("pointerdown", end, true);
+        return () => {
+            onRelease.forEach((ev) => window.removeEventListener(ev, end));
+            window.removeEventListener("pointerdown", end, true);
+        };
+    }, [commitGesture]);
+
+    // Switching tools drops whatever cursor the previous tool set for itself.
+    // Adjusting state during render (React's documented pattern) rather than in
+    // an effect avoids a second paint showing the stale cursor. If Space is held
+    // the next pointer move re-applies the grab cursor, so nothing is lost.
+    const [prevTool, setPrevTool] = useState(appState.tool);
+    if (prevTool !== appState.tool) {
+        setPrevTool(appState.tool);
+        setCursorOverride(null);
+    }
+
+    const cursor = cursorOverride ?? baseCursorForTool(appState.tool);
+
+    // Tell the room what we have selected and which tool we are holding. Both
+    // change rarely, so they publish straight from the render pass; the pointer
+    // position is far too frequent for that and is published from the move
+    // handlers below, coalesced to one message per frame.
+    useEffect(() => { publishSelection(appState.selection); }, [appState.selection]);
+    useEffect(() => { publishTool(appState.tool); }, [appState.tool]);
 
     const getMouseCoordinates = (e: React.MouseEvent | React.TouchEvent) => {
         let clientX, clientY;
@@ -98,7 +147,8 @@ export function useCanvasLogic() {
         setSelection,
         setTool,
         setCursor,
-        addToHistory,
+        beginGesture,
+        commitGesture,
         setTextInput,
         setSelectionRect,
     };
@@ -127,6 +177,7 @@ export function useCanvasLogic() {
     const handleMouseMove = (e: React.MouseEvent) => {
         const { clientX, clientY } = e;
         const { x, y } = getMouseCoordinates(e);
+        publishCursor({ x, y });
 
         if (isPanning || spaceDown.current || appState.tool === "hand") {
             if (lastMousePos.current && (e.buttons === 1)) {
@@ -150,7 +201,10 @@ export function useCanvasLogic() {
 
         if (isPanning || spaceDown.current || appState.tool === "hand") {
             lastMousePos.current = null;
-            setCursor(spaceDown.current ? "grab" : appState.tool === "hand" ? "grab" : "default");
+            // Still panning (Space held, or the hand tool) → back to "grab";
+            // otherwise drop the override so the active tool's cursor returns.
+            if (spaceDown.current || appState.tool === "hand") setCursor("grab");
+            else setCursorOverride(null);
             return;
         }
 
@@ -160,6 +214,10 @@ export function useCanvasLogic() {
         }
     };
 
+    // Withdraw our cursor when the pointer leaves the canvas, so peers do not
+    // see it frozen at the edge as though we were still there.
+    const handleMouseLeave = () => publishCursor(null);
+
     const handleDoubleClick = (e: React.MouseEvent) => {
         if (appState.tool === "hand") return;
         const { x, y } = getMouseCoordinates(e);
@@ -168,8 +226,7 @@ export function useCanvasLogic() {
         const hit = getElementAtPosition(x, y, elements);
         if (hit && hit.type === "text") {
             setSelection([]);
-            addToHistory(); // snapshot pre-edit text so the edit is undoable
-            setTextInput({ x: hit.x, y: hit.y, text: hit.text || "", id: hit.id });
+            setTextInput({ x: hit.x, y: hit.y, id: hit.id });
             return;
         }
 
@@ -228,6 +285,8 @@ export function useCanvasLogic() {
     };
 
     const handleTouchMove = (e: React.TouchEvent) => {
+        if (e.touches.length === 1) publishCursor(getMouseCoordinates(e));
+
         // Handle Pinch Zoom
         if (e.touches.length === 2 && isPinching.current && lastTouchDistance.current) {
             e.preventDefault();
@@ -325,6 +384,7 @@ export function useCanvasLogic() {
         handleMouseDown,
         handleMouseMove,
         handleMouseUp,
+        handleMouseLeave,
         handleDoubleClick,
         handleTouchStart,
         handleTouchMove,

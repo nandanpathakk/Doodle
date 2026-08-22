@@ -3,23 +3,20 @@ import { getElementAtPosition } from "@/lib/math";
 
 export class EraserTool implements Tool {
     private erasing = false;
-    private hasSnapshot = false;
 
     private eraseAt(context: ToolContext) {
-        const { x, y, elements, addToHistory, removeElement } = context;
+        const { x, y, elements, beginGesture, removeElement } = context;
         const el = getElementAtPosition(x, y, elements);
         if (el) {
-            if (!this.hasSnapshot) {
-                addToHistory();
-                this.hasSnapshot = true;
-            }
+            // Only opens the gesture once, so a sweep over many elements is a
+            // single undo step.
+            beginGesture();
             removeElement(el.id);
         }
     }
 
     onMouseDown(e: React.MouseEvent | React.TouchEvent, context: ToolContext) {
         this.erasing = true;
-        this.hasSnapshot = false;
         this.eraseAt(context);
     }
 
@@ -30,6 +27,5 @@ export class EraserTool implements Tool {
 
     onMouseUp() {
         this.erasing = false;
-        this.hasSnapshot = false;
     }
 }
