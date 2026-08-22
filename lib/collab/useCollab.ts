@@ -13,7 +13,7 @@ import { readLegacyElements, markLegacyImported } from "./legacy";
 import {
     docNameFor, readRoomSeed, clearRoomSeed, readStashedRoomName, clearStashedRoomName, relayUrl,
 } from "./session";
-import { startPresence } from "./presence";
+import { startPresence, hasChosenName } from "./presence";
 import { startFollowSync } from "./follow";
 
 /**
@@ -143,7 +143,12 @@ export function useCollab(roomId: string | null = null): void {
                         }, UNREACHABLE_AFTER_MS);
                     }
                 });
-                stopPresence = startPresence(provider.awareness);
+                // Someone who has never picked a name is asked for one before
+                // they join, so hold presence back until they answer — the room
+                // should not see a generated name that is replaced a second
+                // later. Reading remote state is unaffected, which is how the
+                // dialog knows the room's name and who is already in it.
+                stopPresence = startPresence(provider.awareness, { hold: !hasChosenName() });
                 // After presence: the first thing it does is publish a viewport.
                 stopFollow = startFollowSync();
             }
