@@ -11,8 +11,9 @@ const architectsDaughter = Architects_Daughter({
 });
 
 export const metadata: Metadata = {
-  title: "Doodle - Excalidraw Clone",
-  description: "A hand-drawn style whiteboard app",
+  title: "Doodle",
+  description:
+    "A hand-drawn whiteboard for sketching, planning, and thinking out loud — on your own, or with other people in real time.",
 };
 
 export default function RootLayout({
