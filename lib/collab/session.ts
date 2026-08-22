@@ -62,6 +62,27 @@ export const clearRoomSeed = (roomId: string): void => {
     }
 };
 
-/** Relay endpoint. Override with NEXT_PUBLIC_COLLAB_URL when deploying. */
+/** The relay a production build talks to unless it is told otherwise. */
+const DEPLOYED_RELAY = "wss://doodle-relay.onrender.com";
+
+/** What `npm run server` starts, for anyone working on this locally. */
+const LOCAL_RELAY = "ws://localhost:1234";
+
+/**
+ * Which relay to connect to.
+ *
+ * The deployed address lives here, in code, rather than in a committed
+ * `.env.production`. It is not a secret — anything prefixed `NEXT_PUBLIC_` is
+ * inlined into the client bundle and shipped to every browser — but a committed
+ * env file becomes the obvious place to put the next piece of configuration,
+ * and one day that is a real secret. Keeping a non-secret default in source
+ * avoids setting that precedent while still making the deploy reproducible from
+ * a clone.
+ *
+ * `NEXT_PUBLIC_COLLAB_URL` still wins where it is set, which is how you point a
+ * build at a staging or self-hosted relay. Note it is read at *build* time, so
+ * changing it means rebuilding, not restarting.
+ */
 export const relayUrl = (): string =>
-    process.env.NEXT_PUBLIC_COLLAB_URL ?? "ws://localhost:1234";
+    process.env.NEXT_PUBLIC_COLLAB_URL
+    ?? (process.env.NODE_ENV === "production" ? DEPLOYED_RELAY : LOCAL_RELAY);
