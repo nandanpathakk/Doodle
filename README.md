@@ -84,9 +84,11 @@ start` on any Node host.
 WebSocket open. [`render.yaml`](render.yaml) deploys it to Render as-is: point
 Render at this repo, and it picks up the blueprint.
 
-Then set `NEXT_PUBLIC_COLLAB_URL=wss://<your-service>.onrender.com` on the app
-and **redeploy it** — that value is baked in at build time, so restarting is not
-enough.
+A production build points at `wss://doodle-relay.onrender.com` by default;
+development uses the local relay. To use a different one, set
+`NEXT_PUBLIC_COLLAB_URL` in your host's project settings, or change the default
+in `lib/collab/session.ts`. Either way you must **rebuild** — the value is
+inlined into the client bundle at build time, so restarting is not enough.
 
 On a free plan the relay is suspended after a spell with nobody using it, and
 the next person to arrive waits while it starts again. Nothing is lost when this
